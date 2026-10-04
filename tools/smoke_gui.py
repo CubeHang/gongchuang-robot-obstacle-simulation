@@ -91,7 +91,7 @@ def click(key):
 
 
 print("\n=== 行驶流程：出发 -> 三个目标来回 -> 回到出发点 ===")
-seq = [(1, 3), (5, 1), (5, 3), (1, 3), (5, 3), (1, 3), (5, 1)]
+seq = [(1, 3), (5, 3), (3, 1), (1, 3), (5, 3), (1, 3), (3, 1)]
 expected_steps = 0
 for goal in seq:
     p, e = M.shortest_path(sim.car_cell.key, goal)

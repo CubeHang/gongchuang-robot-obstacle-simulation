@@ -18,7 +18,7 @@ for fam in ("Microsoft YaHei", "SimHei", "DengXian"):
         pass
 matplotlib.rcParams["axes.unicode_minus"] = False
 
-ROUTE = [(1, 5), (1, 3), (5, 1), (5, 3), (1, 3), (5, 1)]
+ROUTE = [(1, 5), (1, 3), (5, 3), (3, 1), (1, 3), (5, 3)]
 route_name = " → ".join(M.GRID[k].name for k in ROUTE)
 
 fig, ax = plt.subplots(figsize=(7.4, 7.4), dpi=130)
@@ -50,11 +50,11 @@ for i in range(len(ROUTE) - 1):
             weight="bold", ha="center", va="center", zorder=6,
             bbox=dict(boxstyle="circle,pad=0.22", fc="#0b7a1e", ec="none"))
 
-for p in [c for k in ROUTE for c in M.shortest_path(ROUTE[0], k)[0]]:
-    pass
-for p in M.shortest_path((1, 5), (5, 1))[0]:
-    ax.add_patch(Circle((p.cx, p.cy), 26, facecolor="none", edgecolor="#0b7a1e",
-                        lw=1.4, zorder=5))
+# 把每一段最短路径经过的格心都用小圆点标出来
+for i in range(len(ROUTE) - 1):
+    for p in M.shortest_path(ROUTE[i], ROUTE[i + 1])[0]:
+        ax.add_patch(Circle((p.cx, p.cy), 26, facecolor="none",
+                            edgecolor="#0b7a1e", lw=1.4, zorder=5))
 
 # 网格线（与原图像素一致）
 for x in M.X_BOUNDS:
@@ -97,5 +97,5 @@ plt.tight_layout()
 
 out = os.path.join(os.path.dirname(os.path.abspath(__file__)), "shots", "route_preview.png")
 os.makedirs(os.path.dirname(out), exist_ok=True)
-plt.savefig(out, facecolor="white")
+fig.savefig(out, facecolor="white")
 print("写出", out, "  累计步数 =", total)

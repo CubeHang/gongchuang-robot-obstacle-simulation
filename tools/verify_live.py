@@ -100,7 +100,8 @@ def sample_at(x, y):
 
 
 print("\n红/蓝格位置比对：")
-for key, want_hex in (((1, 3), "#eb0301"), ((1, 5), "#0b02cb"), ((5, 5), "#0b02cb")):
+for key, want_hex in (((1, 3), "#eb0301"), ((1, 5), "#0b02cb"), ((3, 1), "#ffffff"),
+                      ((3, 3), "#c6c7c1")):
     cell = M.GRID[key]
     cxp, cyp = xy(cell.cx, cell.cy)
     half = (cell.x1 - cell.x0) * 0.22 * k
@@ -140,18 +141,44 @@ print("  可见格子中不完全匹配的：%d" % bad)
 FAIL += bad
 
 # 绿色小车：应停在红色区域 r1c3 的格心
-green = (G > 140) & (G > R + 60) & (G > B + 60)
-ys, xs = np.where(green)
+# 注意：深绿色路径线也是偏绿的，这里用连通域取“最大的那块”才是小车
+car_mask = (G > 170) & (G > R + 110) & (G > B + 110)
+ys, xs = np.where(car_mask)
 if len(xs):
-    gx, gy = xs.mean(), ys.mean()
-    cell = M.GRID[(1, 3)]
-    ex, ey = xy(cell.cx, cell.cy)
-    d = ((gx - ex) ** 2 + (gy - ey) ** 2) ** 0.5
-    print("\n绿色小车质心 (%.0f,%.0f) vs 红色区域格心 (%.0f,%.0f)，偏差 %.1f px（格宽 %.0f px）"
-          % (gx, gy, ex, ey, d, (cell.x1 - cell.x0) * k))
-    ok = d < 0.15 * (cell.x1 - cell.x0) * k
-    print("  " + ("✔ 小车停在红色区域格心" if ok else "✘ 小车位置不对"))
-    FAIL += 0 if ok else 1
+    from collections import deque as _dq
+    seen = np.zeros(car_mask.shape, bool)
+    best = None
+    for y0_, x0_ in zip(ys, xs):
+        if seen[y0_, x0_]:
+            continue
+        q = _dq([(y0_, x0_)])
+        seen[y0_, x0_] = True
+        pts = []
+        while q:
+            cy_, cx_ = q.popleft()
+            pts.append((cy_, cx_))
+            for dy, dx in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+                ny, nx = cy_ + dy, cx_ + dx
+                if 0 <= ny < car_mask.shape[0] and 0 <= nx < car_mask.shape[1] \
+                        and car_mask[ny, nx] and not seen[ny, nx]:
+                    seen[ny, nx] = True
+                    q.append((ny, nx))
+        if best is None or len(pts) > len(best):
+            best = pts
+    if best:
+        gx = sum(p[1] for p in best) / len(best)
+        gy = sum(p[0] for p in best) / len(best)
+        cell = M.GRID[(1, 3)]
+        ex, ey = xy(cell.cx, cell.cy)
+        d = ((gx - ex) ** 2 + (gy - ey) ** 2) ** 0.5
+        print("\n绿色小车（最大绿色连通域 %d px）质心 (%.0f,%.0f) vs 红色区域格心 (%.0f,%.0f)，偏差 %.1f px（格宽 %.0f px）"
+              % (len(best), gx, gy, ex, ey, d, (cell.x1 - cell.x0) * k))
+        ok = d < 0.15 * (cell.x1 - cell.x0) * k
+        print("  " + ("✔ 小车停在红色区域格心" if ok else "✘ 小车位置不对"))
+        FAIL += 0 if ok else 1
+    else:
+        print("\n✘ 未找到绿色小车")
+        FAIL += 1
 else:
     print("\n✘ 未找到绿色小车")
     FAIL += 1

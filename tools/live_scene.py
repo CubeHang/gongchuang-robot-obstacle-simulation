@@ -30,15 +30,20 @@ def event_for(key):
     return ev
 
 
-# 先驶到红色区域
+# 先驶到红色区域，并等动画彻底停下（否则截图可能拍到车在途中）
 sim.on_click(event_for((1, 3)))
 t0 = time.time()
 while sim.move is not None and time.time() - t0 < 15:
     win.update()
     time.sleep(0.01)
+settle = time.time()
+while sim.move is not None and time.time() - settle < 3:
+    win.update()
+    time.sleep(0.02)
+assert sim.car_cell.key == (1, 3), "小车应停在红色区域，实际 %s" % (sim.car_cell.key,)
 
-# 悬停白色区域2，显示最短路径预览
-sim.on_motion(event_for((5, 3)))
+# 悬停白色区域2 (3,1)，显示最短路径预览
+sim.on_motion(event_for((3, 1)))
 win.update()
 
 with open(READY, "w", encoding="utf-8") as f:

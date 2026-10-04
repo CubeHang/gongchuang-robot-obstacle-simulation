@@ -22,14 +22,19 @@ for r in range(1, 6):
     print("  r%d  " % r + "  ".join(line))
 
 print("\n=== 关键格子 ===")
-for key in [(1, 5), (5, 5), (1, 3), (5, 1), (5, 3)]:
+for key in [(1, 5), (5, 5), (1, 3), (5, 3), (3, 1)]:
     c = M.GRID[key]
     print("  r%dc%d -> %-6s kind=%-5s goal=%s passable=%s"
           % (key[0], key[1], c.name, c.kind, c.goal_name, c.passable))
 assert M.GRID[(1, 5)].kind == M.START and M.GRID[(5, 5)].kind == M.START
 assert M.GRID[(1, 3)].goal_name == "红色区域"
-assert M.GRID[(5, 1)].goal_name == "白色区域1"
-assert M.GRID[(5, 3)].goal_name == "白色区域2"
+assert M.GRID[(5, 3)].goal_name == "白色区域1"
+assert M.GRID[(3, 1)].goal_name == "白色区域2"
+# 两个白色目标区域用白色底，其余可通行格子是灰色底
+assert M.GRID[(5, 3)].color == M.C_GOAL_WHITE == "#ffffff"
+assert M.GRID[(3, 1)].color == "#ffffff"
+assert M.GRID[(3, 3)].color == M.C_FLOOR == "#c6c7c1"
+assert M.GRID[(1, 1)].color == "#c6c7c1"
 for k in [(2, 2), (2, 4), (4, 2), (4, 4)]:
     assert M.GRID[k].kind == M.WALL and not M.GRID[k].passable
 
@@ -98,8 +103,8 @@ for s in keys:
 print("  全量 %d 组起终点 BFS 交叉校验：%s" % (len(keys) ** 2, "全部通过 ✔" if bad == 0 else "%d 处失败" % bad))
 
 print("\n=== 典型路线（含必经的绕行）===")
-for s, t in [((1, 5), (1, 3)), ((1, 5), (5, 3)), ((1, 5), (5, 1)), ((1, 3), (5, 5)),
-             ((5, 1), (5, 3)), ((5, 3), (5, 1)), ((1, 3), (5, 1))]:
+for s, t in [((1, 5), (1, 3)), ((1, 5), (5, 3)), ((1, 5), (3, 1)), ((1, 3), (5, 5)),
+             ((3, 1), (5, 3)), ((5, 3), (3, 1)), ((1, 3), (5, 3)), ((5, 5), (3, 1))]:
     path, err = M.shortest_path(s, t)
     print("  %-8s -> %-8s : %2d 格  %s" % (M.GRID[s].name, M.GRID[t].name,
                                            len(path), "→".join("r%dc%d" % k for k in (c.key for c in path))))
