@@ -18,17 +18,36 @@ def check(cond, msg):
 
 # ---------------------------------------------------------------- 出发点弹窗 --
 print("=== 出发点选择弹窗 ===")
+
+
+class E:
+    pass
+
+
+# 与真实启动方式一致：master 必须是“已映射”的窗口，否则 transient 弹窗会被隐藏
 root = tk.Tk()
-root.withdraw()
+root.overrideredirect(True)
+try:
+    root.attributes("-alpha", 0.0)
+except tk.TclError:
+    pass
+root.geometry("1x1+-100+-100")
+root.update()
+
 dlg = M.StartDialog(root)
 root.update()
+# 回归检查：弹窗必须真的显示出来（曾因 root withdrawn + transient 被永久隐藏）
+check(dlg.top.state() == "normal", "出发点弹窗状态为 normal（实际 %s）" % dlg.top.state())
+check(dlg.top.winfo_viewable() == 1, "出发点弹窗在屏幕上可见")
+check(dlg.top.winfo_width() > 400 and dlg.top.winfo_height() > 400,
+      "出发点弹窗尺寸 %dx%d" % (dlg.top.winfo_width(), dlg.top.winfo_height()))
+check(dlg.canvas.winfo_width() > 400, "弹窗内地图画布已渲染（宽 %d）" % dlg.canvas.winfo_width())
+
 rc = dlg._cell_at(*dlg._tc(M.GRID[(1, 5)].cx, M.GRID[(1, 5)].cy))
 check(rc is not None and rc.key == (1, 5), "弹窗中点击 (1,5) 中心可识别为蓝色出发点")
 rc = dlg._cell_at(*dlg._tc(M.GRID[(3, 3)].cx, M.GRID[(3, 3)].cy))
 check(rc is not None and rc.key == (3, 3), "弹窗中点击 (3,3) 中心识别正确")
 # 非蓝色格子不应被接受
-class E:
-    pass
 ev = E(); ev.x, ev.y = dlg._tc(M.GRID[(3, 3)].cx, M.GRID[(3, 3)].cy)
 dlg._click(ev)
 check(dlg.choice is None, "点击非蓝色格子不会选定出发点")
@@ -43,6 +62,7 @@ print("\n=== 主界面：点击坐标换算 ===")
 win = tk.Tk()
 sim = M.Simulator(win, (1, 5))
 win.update()
+check(win.state() == "normal" and win.winfo_viewable() == 1, "主窗口正常显示")
 for key in [(1, 1), (1, 3), (2, 2), (3, 3), (5, 3), (5, 5)]:
     cell = M.GRID[key]
     got = sim.cell_at_canvas(*sim.to_canvas(cell.cx, cell.cy))

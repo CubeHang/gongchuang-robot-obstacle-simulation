@@ -654,7 +654,6 @@ class StartDialog:
         self.top.title("选择出发点")
         self.top.configure(bg="#20242b")
         self.top.transient(root)
-        self.top.grab_set()
         self.top.protocol("WM_DELETE_WINDOW", self._cancel)
 
         f_title = tkfont.Font(family=FONT_FAMILY, size=13, weight="bold")
@@ -687,6 +686,22 @@ class StartDialog:
 
         self.f_cell = f_cell
         self._draw()
+        # 画面就绪后再抓输入焦点（不要用 wait_visibility，主窗口不可见时会死等）
+        self.top.update_idletasks()
+        self.top.after_idle(self._activate)
+
+    def _activate(self):
+        """弹窗真正显示后再设置模态抓取，并确保它被带到前台。"""
+        try:
+            if self.top.winfo_viewable():
+                self.top.grab_set()
+        except tk.TclError:
+            pass
+        try:
+            self.top.lift()
+            self.top.focus_force()
+        except tk.TclError:
+            pass
 
     def _tc(self, x, y):
         return self.margin + x * self.k, self.margin + y * self.k
@@ -767,20 +782,36 @@ class StartDialog:
 # 5. 启动
 # ----------------------------------------------------------------------------
 
-def main():
+def open_start_dialog():
+    """弹出出发点选择窗口，返回选中的格子坐标（取消则返回 None）。
+
+    注意：不能在建 Toplevel 之前把 root withdraw 掉 —— Tk 在 Windows 上会让
+    “master 不可见的 transient 窗口”保持 withdrawn，出发点弹窗就永远不显示。
+    所以这里先把 root 做成透明无边框的临时窗口顶一下，弹窗显示后再收起。
+    """
     root = tk.Tk()
-    root.withdraw()
+    root.overrideredirect(True)
+    try:
+        root.attributes("-alpha", 0.0)
+    except tk.TclError:
+        pass
+    root.geometry("1x1+-100+-100")
+    root.update()
 
     dlg = StartDialog(root)
     root.wait_window(dlg.top)
-
-    if dlg.choice is None:
-        root.destroy()
-        return
-
+    root.withdraw()              # 弹窗已显示，把临时 root 收起来
+    choice = dlg.choice
     root.destroy()
+    return choice
+
+
+def main():
+    choice = open_start_dialog()
+    if choice is None:
+        return
     win = tk.Tk()
-    Simulator(win, dlg.choice)
+    Simulator(win, choice)
     win.mainloop()
 
 

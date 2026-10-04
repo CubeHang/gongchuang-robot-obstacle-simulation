@@ -99,4 +99,5 @@ STEP_SECONDS = 0.30  # 走一格的基础耗时（秒）
 | `python tools/render_preview.py` | 生成路径效果图 `tools/shots/route_preview.png` |
 | `python tools/verify_render.py` | 对效果图做逐格像素校验 |
 | `python tools/verify_live.py` | 对真实屏幕截图 `tools/shots/live.png` 做标定后逐格校验 |
+| `python tools/auto_demo.py` | 无人值守演示：自动选出发点、依次跑目标、最后回到出发点 |
 | `tools/analyze_map.py` 等 | 当初解析 map.jpg 用的像素分析脚本 |
