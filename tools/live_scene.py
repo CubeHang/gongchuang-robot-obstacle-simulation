@@ -58,6 +58,7 @@ with open(READY, "w", encoding="utf-8") as f:
     f.write("ready")
 print("ready")
 
+
 t0 = time.time()
 while time.time() - t0 < 12:
     win.update()

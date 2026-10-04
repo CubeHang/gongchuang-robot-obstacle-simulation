@@ -76,7 +76,7 @@ for goal in ROUTE:
         sys.exit(0)
     print("   已到达，累计行驶 %d 格" % sim.steps, flush=True)
 
-print("回到出发点 %s" % M.GRID[START].name, flush=True)
+print("回到出发点 %s（小车先开回去，到站后才结束）" % M.GRID[START].name, flush=True)
 path, _ = M.shortest_path(sim.car_cell.key, START)
 print("→ %s：%d 格" % (M.GRID[START].name, len(path)), flush=True)
 click(START)
@@ -84,7 +84,12 @@ try:
     win.update()
 except tk.TclError:
     print("窗口已关闭", flush=True)
-print("仿真结束，累计行驶 %d 格，到达过：%s"
+assert not sim.finished, "还没到出发点，不应提前结束"
+assert sim.move is not None and sim.move.get("returning"), "这一段应是返回出发点"
+run_until_still()
+assert sim.car_cell.key == START, "小车应停在出发点，实际 %s" % (sim.car_cell.key,)
+assert sim.finished, "到达出发点后才结束仿真"
+print("小车已回到出发点，仿真结束，累计行驶 %d 格，到达过：%s"
       % (sim.steps, "、".join(sim.visited_goals)), flush=True)
 
 # 停 3 秒展示结束总结，再关掉（期间窗口可能被手动关闭）

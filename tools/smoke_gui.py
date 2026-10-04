@@ -185,20 +185,66 @@ check(sim.move is not None and sim.move["path"][-1].key == (1, 3),
 drive()
 check(sim.car_cell.key == (1, 3), "小车正常抵达 (1,3)")
 
-# 点击出发点 -> 结束
-print("\n=== 点击出发点结束仿真 ===")
+# 点击出发点 -> 小车先开回出发点，到站后才结束
+print("\n=== 点击出发点：先回出发点，再结束 ===")
+tops_before = [w for w in win.winfo_children() if isinstance(w, tk.Toplevel)]
+car_before = sim.car_cell.key
+ret_path, _ = M.shortest_path(car_before, (1, 5))
+check(len(ret_path) > 1, "当前小车不在出发点上（%s）" % M.GRID[car_before].name)
+
+# 悬停出发点应预览“回出发点”的路径
+ev = E(); ev.x, ev.y = sim.to_canvas(M.GRID[(1, 5)].cx, M.GRID[(1, 5)].cy)
+sim.on_motion(ev)
+win.update()
+check(sim.preview_path and sim.preview_path[-1].key == (1, 5),
+      "悬停出发点时预览了回出发点的最短路径")
+check("开回出发点" in sim.lbl_status.cget("text"), "状态栏说明会先开回出发点")
+
 click((1, 5))
 win.update()
-check(sim.finished, "点击出发点所在格子后进入结束状态")
+check(sim.move is not None, "点击出发点后小车开始返回（而不是立刻结束）")
+check(sim.move is not None and sim.move.get("returning") is True,
+      "这一段被标记为“返回出发点”")
+check(sim.car_cell.key != (1, 5), "此刻小车还在路上，没有瞬间移动")
+check(not sim.finished, "还没到出发点，仿真没有结束")
+check(sim.phase == "move", "处于行驶状态")
+tops_mid = [w for w in win.winfo_children() if isinstance(w, tk.Toplevel)]
+check(len(tops_mid) == len(tops_before), "行驶途中没有提前弹出结束对话框")
+check("返回出发点" in sim.lbl_mode.cget("text"), "模式显示“返回出发点……”")
+
+drive()
+check(sim.car_cell.key == (1, 5), "小车已停在出发点格子上")
+check(sim.steps >= len(ret_path) - 1, "返回的格数被计入总行驶格数")
+check(sim.finished, "到达出发点后仿真结束")
 check(sim.lbl_mode.cget("text") == "仿真结束", "模式显示“仿真结束”")
 text = sim.txt.get("1.0", "end")
 check("本次仿真结束" in text and "行驶格数" in text, "行驶记录中输出了总结")
-check(len(sim.root.winfo_children()) >= 1, "弹出了结束对话框")
+check("小车已回到出发点" in text, "记录中写明小车已回到出发点")
+check("小车位置：出发点1" in text, "总结里列出了小车最终位置")
 
 # 结束对话框按钮
 tops = [w for w in win.winfo_children() if isinstance(w, tk.Toplevel)]
-check(len(tops) == 1, "结束对话框存在")
+check(len(tops) == 1, "到站后才弹出结束对话框（实际 %d 个）" % len(tops))
 win.destroy()
+
+# ---- 已经在出发点时再点，应当直接结束 ----
+print("\n=== 小车已在出发点时点击出发点 ===")
+win2 = tk.Tk()
+sim2 = M.Simulator(win2, (1, 5))
+win2.update()
+ev = E(); ev.x, ev.y = sim2.to_canvas(M.GRID[(3, 3)].cx, M.GRID[(3, 3)].cy)
+sim2.on_click(ev)                      # 准备阶段：顺手放个障碍物
+check(sim2.obstacle_keys == [(3, 3)], "准备阶段放置障碍物成功")
+sim2.begin_simulation()
+win2.update()
+ev = E(); ev.x, ev.y = sim2.to_canvas(M.GRID[(1, 5)].cx, M.GRID[(1, 5)].cy)
+sim2.on_motion(ev)
+check("小车已在出发点" in sim2.lbl_status.cget("text"), "已在出发点时提示会直接结束")
+sim2.on_click(ev)
+win2.update()
+check(sim2.finished, "已经在出发点时点击 → 直接结束")
+check(sim2.steps == 0, "没有产生多余的行驶格数")
+win2.destroy()
 
 print("\n" + ("全部通过 ✔" if not FAIL else "失败 %d 项：%s" % (len(FAIL), FAIL)))
 sys.exit(1 if FAIL else 0)

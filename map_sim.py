@@ -349,6 +349,7 @@ class Simulator:
         self.preview_path = []
         self.finished = False
 
+        clear_obstacles()             # 新的一次仿真从零开始
         if obstacles:                 # 允许外部先摆好障碍物（自动演示用）
             self.obstacle_keys = place_obstacles(obstacles)
 
@@ -757,7 +758,21 @@ class Simulator:
         if cell.key == self.start_key:
             self.canvas.config(cursor="hand2")
             self._highlight(cell, "#ffd166")
-            self.status("点击此处 → 结束本次仿真（回到出发点）")
+            if self.phase == "select":
+                # 预览“开回出发点”的路径，让用户知道点下去小车会怎么走
+                if self.car_cell.key == self.start_key:
+                    self.status("小车已在出发点。\n点击此处 → 结束本次仿真")
+                else:
+                    path, err = shortest_path(self.car_cell.key, self.start_key)
+                    if not err:
+                        self.preview_path = path
+                        self._draw_path(path, color="#ffd166", width=3, dash=(5, 4))
+                        self.status("点击此处 → 小车先开回出发点（%d 格），到达后本次仿真结束\n%s"
+                                    % (len(path) - 1, path_text(path)))
+                    else:
+                        self.status("点击此处 → 结束本次仿真（%s，无法开回去）" % err)
+            else:
+                self.status("小车正在返回出发点……")
             return
 
         if not cell.passable:
@@ -820,12 +835,22 @@ class Simulator:
             return
 
         if cell.key == self.start_key:
-            self.finish()
+            # 先让小车沿最短路径开回出发点，到站后再结束并弹总结
+            self.start_move(cell, returning=True)
             return
         self.start_move(cell)
 
     # ---------------------------------------------------------------- 运动 --
-    def start_move(self, target):
+    def start_move(self, target, returning=False):
+        """规划并开始行驶到 target。returning=True 表示这是“回出发点结束”的一段。"""
+        if target.key == self.car_cell.key:
+            # 已经站在目标格上
+            if returning:
+                self.finish()
+            else:
+                self.on_arrive(target)
+            return
+
         path, err = shortest_path(self.car_cell.key, target.key)
         if err:
             self.log("无法到达 %s：%s" % (target.name, err))
@@ -845,16 +870,14 @@ class Simulator:
                     "（已绕开 %d 个障碍物）" % len(self.obstacle_keys)
                     if self.obstacle_keys else ""))
 
-        if len(path) == 1:
-            self.on_arrive(target)
-            return
-
         self.phase = "move"
-        self.lbl_mode.config(text="行驶中……", fg="#facc15")
-        self.status("正在驶向 %s" % target.name)
+        self.lbl_mode.config(text="返回出发点……" if returning else "行驶中……",
+                             fg="#facc15")
+        self.status("正在返回出发点 %s，到达后本次仿真结束" % target.name if returning
+                    else "正在驶向 %s" % target.name)
         self.move = {
             "path": path, "idx": 1, "from": path[0], "to": path[1],
-            "t0": None, "cell_sec": STEP_SECONDS,
+            "t0": None, "cell_sec": STEP_SECONDS, "returning": returning,
         }
         self._last = None
         self.root.after(16, self.tick)
@@ -884,7 +907,12 @@ class Simulator:
             mv["idx"] += 1
             if mv["idx"] >= len(mv["path"]):
                 self.move = None
-                self.on_arrive(arrived)
+                if mv.get("returning"):
+                    # 车已经停在出发点格心，再结束仿真
+                    self._draw_car()
+                    self.finish()
+                else:
+                    self.on_arrive(arrived)
                 return
             mv["from"], mv["to"] = arrived, mv["path"][mv["idx"]]
             mv["t0"] = now
@@ -909,6 +937,11 @@ class Simulator:
 
     # ------------------------------------------------------------ 结束/重来 --
     def finish(self):
+        """结束本次仿真。
+
+        正常流程是小车先开回出发点（`tick` 到站后调用这里），此时车就停在出发点格心；
+        “结束本次仿真”按钮可以直接结束，不要求小车在出发点。
+        """
         if self.finished:
             return
         self.finished = True
@@ -923,17 +956,23 @@ class Simulator:
         self.btn_finish.config(state="disabled")
         self.update_stat()
 
+        at_start = self.car_cell.key == self.start_key
         visited = set(self.visited_goals)
         all_goals = set(name for name, _c, _m in GOAL_INFO.values())
         missing = all_goals - visited
-        summary = ("出发点：%s\n障碍物：%s\n行驶格数：%d\n到达过的目标：%s\n未到达的目标：%s"
+        summary = ("出发点：%s\n障碍物：%s\n行驶格数：%d\n小车位置：%s\n到达过的目标：%s\n未到达的目标：%s"
                    % (GRID[self.start_key].name,
                       "、".join(GRID[k].name for k in self.obstacle_keys)
                       if self.obstacle_keys else "无",
                       self.steps,
+                      GRID[self.start_key].name if at_start else
+                      "%s（未回到出发点）" % self.car_cell.name,
                       "、".join(self.visited_goals) if self.visited_goals else "无",
                       "、".join(sorted(missing)) if missing else "无"))
-        self.log("—— 本次仿真结束 ——")
+        if at_start:
+            self.log("—— 小车已回到出发点，本次仿真结束 ——")
+        else:
+            self.log("—— 本次仿真结束（小车停在 %s，未回到出发点）——" % self.car_cell.name)
         for line in summary.split("\n"):
             self.log("   " + line)
         self.status(summary)
