@@ -6,6 +6,7 @@ import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import tkinter as tk
 import map_sim as M
+import time
 
 FAIL = []
 
@@ -93,61 +94,62 @@ check(sim.canvas.type([i for i in sim.canvas.find_withtag("obs")
                        if sim.canvas.type(i) == "text"][0]) == "text",
       "障碍物上有文字标注")
 
+# ---- 阶段②：目标区域阶段，检查计划预览虚线 ----
+sim.enter_targets()
+win.update()
+check(sim.phase == "targets", "进入目标区域阶段")
+preview_items = list(sim.canvas.find_withtag("preview"))
+check(len(preview_items) > 0, "地图上画出计划预览（%d 个图元）" % len(preview_items))
+preview_lines = [i for i in preview_items if sim.canvas.type(i) == "line"]
+check(len(preview_lines) == sim.plan_info["segments"],
+      "预览折线数量 = 计划段数（%d）" % sim.plan_info["segments"])
+
+# 每一段折线的顶点应当与该段最短路径的格心一致
+ok = True
+for i, seg in enumerate(sim.plan):
+    line = preview_lines[i]
+    coords = sim.canvas.coords(line)
+    for j, cell in enumerate(seg):
+        cx, cy = sim.to_canvas(cell.cx, cell.cy)
+        if abs(coords[2 * j] - cx) > 1 or abs(coords[2 * j + 1] - cy) > 1:
+            ok = False
+check(ok, "每段预览折线的顶点都与 BFS 最短路径格心一致")
+
+# 悬停在目标区域上给出提示
+ev = E(); ev.x, ev.y = sim.to_canvas(M.GRID[(3, 5)].cx, M.GRID[(3, 5)].cy)
+sim.on_motion(ev)
+win.update()
+check("橙色区域" in sim.lbl_status.cget("text"), "悬停橙色区域给出说明：%r"
+      % sim.lbl_status.cget("text").replace("\n", " | "))
+
+# ---- 阶段③：开始仿真，检查深绿色路径线与小车跟随 ----
 sim.begin_simulation()
 win.update()
-check(sim.phase == "select", "开始仿真后进入选择目标阶段")
-
-# ---- 悬停白色区域1 (5,3) 应出现黄色预览路径，且经过 9 个格心 ----
-# 先把鼠标移到一个普通格子再移到目标格（模拟真实鼠标轨迹）
-for k in [(3, 3), (5, 3)]:
-    ev = E()
-    ev.x, ev.y = sim.to_canvas(M.GRID[k].cx, M.GRID[k].cy)
-    sim.on_motion(ev)
-    win.update()
-cell = M.GRID[(5, 3)]
-ev = E(); ev.x, ev.y = sim.to_canvas(cell.cx, cell.cy)
-path_items = list(sim.canvas.find_withtag("path"))
-yellow_lines = [i for i in path_items if sim.canvas.type(i) == "line"
-                and sim.canvas.itemcget(i, "fill") == "#facc15"]
-yellow_dots = [i for i in path_items
-               if sim.canvas.type(i) == "oval" and sim.canvas.itemcget(i, "fill") == "#facc15"]
-want_keys = [c.key for c in M.shortest_path((1, 5), (5, 3))[0]]
-check(len(yellow_lines) == 1, "预览路径画出了折线")
-check(len(yellow_dots) == len(want_keys),
-      "预览路径标出 %d 个格心（实际 %d）" % (len(want_keys), len(yellow_dots)))
-
-coords = sim.canvas.coords(yellow_lines[0])
-ok = True
-for i, key in enumerate(want_keys):
-    cx, cy = sim.to_canvas(M.GRID[key].cx, M.GRID[key].cy)
-    if abs(coords[2 * i] - cx) > 1 or abs(coords[2 * i + 1] - cy) > 1:
-        ok = False
-check(ok, "折线顶点与最短路径格心逐一对应（%s）" % "→".join("r%dc%d" % k for k in want_keys))
-
-# 状态栏文本包含路径与格数
-st = sim.lbl_status.cget("text")
-check("%d 个格子" % len(want_keys) in st, "状态栏显示经过格数：%r" % st.replace("\n", " | "))
-
-# ---- 行驶中深绿色路径线 ----
-ev = E(); ev.x, ev.y = sim.to_canvas(cell.cx, cell.cy)
-sim.on_click(ev)
-win.update()
+check(sim.phase == "run", "开始后进入自动仿真阶段")
+t0 = time.time()
+while sim.move is None and not sim.finished and time.time() - t0 < 3:
+    win.update(); time.sleep(0.01)
 green_lines = [i for i in sim.canvas.find_withtag("path")
                if sim.canvas.type(i) == "line"
                and sim.canvas.itemcget(i, "fill") == M.C_PATH]
 check(len(green_lines) == 1, "行驶中显示深绿色已规划路径")
-import time
+
 t0 = time.time()
-while sim.move is not None and time.time() - t0 < 15:
-    win.update(); time.sleep(0.01)
-check(sim.car_cell.key == (5, 3), "小车抵达白色区域1 (5,3)")
+while (sim.move is not None or (not sim.finished and sim.phase == "run")) \
+        and time.time() - t0 < 60:
+    win.update(); time.sleep(0.005)
+check(sim.finished, "自动仿真跑完并结束")
+check(sim.car_cell.key == (1, 5), "小车回到出发点格心")
 
 # ---- 绘制后小车跟随 ----
 car = [i for i in sim.canvas.find_all()
        if sim.canvas.type(i) == "oval" and sim.canvas.itemcget(i, "fill") == M.C_CAR]
 x0, y0, x1, y1 = sim.canvas.coords(car[0])
-cx, cy = sim.to_canvas(M.GRID[(5, 3)].cx, M.GRID[(5, 3)].cy)
-check(abs((x0 + x1) / 2 - cx) < 1 and abs((y0 + y1) / 2 - cy) < 1, "小车停在白色区域1 (5,3) 格心")
+cx, cy = sim.to_canvas(M.GRID[(1, 5)].cx, M.GRID[(1, 5)].cy)
+check(abs((x0 + x1) / 2 - cx) < 1 and abs((y0 + y1) / 2 - cy) < 1,
+      "小车最后停在出发点 (1,5) 格心")
+check(sim.steps == sim.plan_info["total_steps"],
+      "总步数 %d = 计划步数 %d" % (sim.steps, sim.plan_info["total_steps"]))
 
 # ---- 面板尺寸是否放得下 ----
 win.update()

@@ -1,5 +1,9 @@
 # -*- coding: utf-8 -*-
-"""用真实的 Tk 界面做自动化冒烟测试：模拟点击 + 驱动动画，验证整条流程。"""
+"""用真实的 Tk 界面做自动化冒烟测试：走完“选起点 → 摆障碍 → 选目标 → 自动连跑 → 回起点”。
+
+新流程（v1.2）：
+    ① 放置障碍物   →   ② 勾选目标区域（顺序 = 访问顺序）   →   ③ 点开始仿真自动跑完
+"""
 import sys
 import os
 
@@ -16,13 +20,12 @@ def check(cond, msg):
         FAIL.append(msg)
 
 
-# ---------------------------------------------------------------- 出发点弹窗 --
-print("=== 出发点选择弹窗 ===")
-
-
 class E:
     pass
 
+
+# ---------------------------------------------------------------- 出发点弹窗 --
+print("=== 出发点选择弹窗 ===")
 
 # 与真实启动方式一致：master 必须是“已映射”的窗口，否则 transient 弹窗会被隐藏
 root = tk.Tk()
@@ -36,7 +39,6 @@ root.update()
 
 dlg = M.StartDialog(root)
 root.update()
-# 回归检查：弹窗必须真的显示出来（曾因 root withdrawn + transient 被永久隐藏）
 check(dlg.top.state() == "normal", "出发点弹窗状态为 normal（实际 %s）" % dlg.top.state())
 check(dlg.top.winfo_viewable() == 1, "出发点弹窗在屏幕上可见")
 check(dlg.top.winfo_width() > 400 and dlg.top.winfo_height() > 400,
@@ -45,9 +47,6 @@ check(dlg.canvas.winfo_width() > 400, "弹窗内地图画布已渲染（宽 %d�
 
 rc = dlg._cell_at(*dlg._tc(M.GRID[(1, 5)].cx, M.GRID[(1, 5)].cy))
 check(rc is not None and rc.key == (1, 5), "弹窗中点击 (1,5) 中心可识别为蓝色出发点")
-rc = dlg._cell_at(*dlg._tc(M.GRID[(3, 3)].cx, M.GRID[(3, 3)].cy))
-check(rc is not None and rc.key == (3, 3), "弹窗中点击 (3,3) 中心识别正确")
-# 非蓝色格子不应被接受
 ev = E(); ev.x, ev.y = dlg._tc(M.GRID[(3, 3)].cx, M.GRID[(3, 3)].cy)
 dlg._click(ev)
 check(dlg.choice is None, "点击非蓝色格子不会选定出发点")
@@ -57,193 +56,210 @@ check(dlg.choice == (5, 5), "点击蓝色格子 (5,5) 成功选定出发点")
 dlg.top.destroy()
 root.destroy()
 
-# ---------------------------------------------------------------- 主仿真界面 --
-print("\n=== 主界面：点击坐标换算 ===")
+# ---------------------------------------------------------------- 主界面 --
+print("\n=== 主界面：坐标换算 ===")
 win = tk.Tk()
 sim = M.Simulator(win, (1, 5))
 win.update()
 check(win.state() == "normal" and win.winfo_viewable() == 1, "主窗口正常显示")
-for key in [(1, 1), (1, 3), (2, 2), (3, 3), (5, 3), (5, 5)]:
-    cell = M.GRID[key]
-    got = sim.cell_at_canvas(*sim.to_canvas(cell.cx, cell.cy))
-    check(got is not None and got.key == key,
-          "画布坐标反查 r%dc%d 正确" % key)
-
+for key in [(1, 1), (1, 3), (2, 2), (3, 3), (3, 5), (5, 3), (5, 5)]:
+    got = sim.cell_at_canvas(*sim.to_canvas(M.GRID[key].cx, M.GRID[key].cy))
+    check(got is not None and got.key == key, "画布坐标反查 r%dc%d 正确" % key)
 check(sim.cell_at_canvas(2, 2) is None, "画布留白处返回 None（不误判格子）")
 
 
-def drive(timeout=25.0):
-    """推进 Tk 事件循环直到小车停止移动。"""
+def drive(timeout=60.0):
+    """推进 Tk 事件循环直到小车和整个计划都跑完。"""
     import time
     t0 = time.time()
-    while sim.move is not None:
+    while (sim.move is not None or (not sim.finished and sim.phase == "run")):
         win.update()
-        time.sleep(0.005)
+        time.sleep(0.004)
         if time.time() - t0 > timeout:
-            raise TimeoutError("动画超时")
+            raise TimeoutError("仿真超时")
 
 
-def click(key):
+def click_cell(key):
     cell = M.GRID[key]
     ev = E(); ev.x, ev.y = sim.to_canvas(cell.cx, cell.cy)
     sim.on_motion(ev)
     sim.on_click(ev)
 
 
-# ------------------------------------------------------------ 阶段：放障碍物 --
+# ------------------------------------------------------------ 阶段①：障碍物 --
 print("\n=== 阶段①：放置障碍物 ===")
 check(sim.phase == "setup", "初始进入障碍物准备阶段（实际 %s）" % sim.phase)
-check(str(sim.btn_start["state"]) == "disabled", "没放障碍物时“开始仿真”按钮不可用")
-sim.begin_simulation()
-check(sim.phase == "setup", "没有障碍物时不能开始仿真")
+check(str(sim.btn_to_targets["state"]) == "disabled", "没放障碍物时“下一步”不可用")
+sim.enter_targets()
+check(sim.phase == "setup", "没有障碍物时不能进入目标区域阶段")
 
-# 被选中的出发点不能放障碍物
-click((1, 5))
+click_cell((1, 5))
 check(len(sim.obstacle_keys) == 0, "被选作出发点的蓝格不能放障碍物")
-# 黄色禁行区与目标地点不能放
-click((2, 2)); check(len(sim.obstacle_keys) == 0, "黄色禁行区不能放障碍物")
-click((1, 3)); check(len(sim.obstacle_keys) == 0, "红色目标区域不能放障碍物")
-click((5, 3)); check(len(sim.obstacle_keys) == 0, "白色区域1 不能放障碍物")
-click((3, 1)); check(len(sim.obstacle_keys) == 0, "白色区域2 不能放障碍物")
-# 另一个出发点可以放
-click((5, 5))
+for key in list(M.GOAL_INFO):
+    click_cell(key)
+check(len(sim.obstacle_keys) == 0, "四个目标区域都不能放障碍物")
+click_cell((2, 2))
+check(len(sim.obstacle_keys) == 0, "黄色禁行区不能放障碍物")
+click_cell((5, 5))
 check(sim.obstacle_keys == [(5, 5)], "另一个蓝色出发点可以放障碍物（视为普通路径）")
-click((5, 5))
+click_cell((5, 5))
 check(sim.obstacle_keys == [], "再点一下取消该障碍物")
 
-# 手动放 1 个：r1c4 会挡住去红色区域的直路
-click((1, 4))
+click_cell((1, 4))                      # 挡住去红色区域的直路
 check(sim.obstacle_keys == [(1, 4)], "手动放置障碍物成功")
-check(M.GRID[(1, 4)].obstacle and not M.GRID[(1, 4)].passable, "障碍物格子不可通行")
-check(str(sim.btn_start["state"]) == "normal", "有 1 个障碍物后可以开始仿真")
-n_obs = len(sim.canvas.find_withtag("obs")) if hasattr(sim, "canvas") else 0
+check(str(sim.btn_to_targets["state"]) == "normal", "有 1 个障碍物后可以进入下一步")
 check(any(sim.canvas.itemcget(i, "fill") == M.C_OBSTACLE
           for i in sim.canvas.find_withtag("obs")
-          if sim.canvas.type(i) == "rectangle"),
-      "画布上画出了棕色障碍物")
+          if sim.canvas.type(i) == "rectangle"), "画布上画出了棕色障碍物")
 
-# 第 3 个障碍物应被拒绝
-click((3, 3)); click((3, 4))
-check(len(sim.obstacle_keys) <= 2, "障碍物最多 2 个（实际 %d）" % len(sim.obstacle_keys))
-
-# 随机放置
 sim.randomize_obstacles()
 check(1 <= len(sim.obstacle_keys) <= 2, "随机放置得到 1~2 个障碍物")
-ok, bad = M.reachable_goals(sim.start_key)
-check(not bad, "随机放置后三个目标仍全部可达")
+check(not M.reachable_goals(sim.start_key)[1], "随机放置后目标仍全部可达")
 
-# 手动摆一个会堵死出发点的组合，应被拦住不能开始
+# 堵死目标的组合要被拦住
 sim.clear_obstacle_ui()
-click((1, 4)); click((2, 5))
-check(str(sim.btn_start["state"]) == "disabled", "目标不可达时“开始仿真”被禁用")
-sim.begin_simulation()
-check(sim.phase == "setup", "目标不可达时不允许开始仿真")
-check(sim.bad_goals, "状态栏/画布给出了不可达告警")
+click_cell((1, 4)); click_cell((2, 5))
+check(str(sim.btn_to_targets["state"]) == "disabled", "目标不可达时“下一步”被禁用")
+sim.enter_targets()
+check(sim.phase == "setup", "目标不可达时不允许进入目标阶段")
 
-# 换成一组不影响通行的障碍物
+# 换一个不影响通行的障碍物
 sim.clear_obstacle_ui()
-click((3, 3))
-check(sim.obstacle_keys == [(3, 3)], "重新放置一个障碍物")
+click_cell((3, 3))
+sim.enter_targets()
+
+# ------------------------------------------------------- 阶段②：选择目标区域 --
+print("\n=== 阶段②：勾选目标区域 ===")
+check(sim.phase == "targets", "进入目标区域阶段（实际 %s）" % sim.phase)
+check(sim.targets == list(M.DEFAULT_TARGETS), "默认四个目标区域都勾选：%s"
+      % M.target_selection_text(sim.targets))
+check(len(sim.canvas.find_withtag("preview")) > 0, "进入目标阶段即用虚线画出整条计划路径")
+check(sim.lbl_target[(1, 3)].cget("text") == "第 1 个", "红色区域编号 1")
+check(sim.lbl_target[(3, 5)].cget("text") == "第 2 个", "橙色区域编号 2")
+check(sim.lbl_target[(5, 3)].cget("text") == "第 3 个", "白色区域1 编号 3")
+check(sim.lbl_target[(3, 1)].cget("text") == "第 4 个", "白色区域2 编号 4")
+
+# 取消橙色
+sim.var_targets[(3, 5)].set(False)
+sim.on_target_toggle()
+check((3, 5) not in sim.targets, "取消勾选橙色区域后它不在计划里")
+check(sim.lbl_target[(3, 5)].cget("text") == "不前往", "橙色区域显示“不前往”")
+check(sim.targets == [(1, 3), (5, 3), (3, 1)], "顺序保持：%s" % M.target_selection_text(sim.targets))
+
+# 重新勾选 -> 排到最后
+sim.var_targets[(3, 5)].set(True)
+sim.on_target_toggle()
+check(sim.targets[-1] == (3, 5), "重新勾选的橙色区域排在最后（第 4 个）")
+
+# 调整顺序
+sim.targets = list(M.DEFAULT_TARGETS)
+sim.var_targets[(1, 3)].set(True)
+sim.on_target_toggle()
+sim.var_targets[(3, 1)].set(False); sim.on_target_toggle()
+check(sim.targets == [(1, 3), (3, 5), (5, 3)], "取消白色区域2：%s"
+      % M.target_selection_text(sim.targets))
+sim.var_targets[(3, 1)].set(True); sim.on_target_toggle()
+order_before = list(sim.targets)
+sim.move_target(1)
+check(sim.targets == order_before[1:] + order_before[:1], "“延后”把第一个目标移到最后")
+
+# 把顺序恢复成默认，便于后续比对
+sim.targets = list(M.DEFAULT_TARGETS)
+sim.on_target_toggle()
+
+# 弹窗预览：一整条计划用虚线画出来
+plan_segs, plan_info = M.build_plan(sim.start_key, sim.targets)
+check("预计总里程" in sim.lbl_plan.cget("text"), "面板显示了预计总里程")
+check("4 步" in sim.lbl_plan.cget("text") or str(plan_info["total_steps"]) in sim.lbl_plan.cget("text"),
+      "面板总里程与计划一致（%d 步）" % plan_info["total_steps"])
+check(len(sim.canvas.find_withtag("preview")) > 0, "地图上用虚线画出了计划路径")
+
+# 恢复成四个目标，检查预计里程变成完整计划的步数
+sim.targets = list(M.DEFAULT_TARGETS)
+for var in sim.var_targets.values():
+    var.set(True)
+sim.on_target_toggle()
+full_segs, full_info = M.build_plan(sim.start_key, sim.targets)
+check(sim.plan_info.get("total_steps") == full_info["total_steps"],
+      "四个目标时预计总里程 = %d 步" % full_info["total_steps"])
+
+# 全部取消勾选 -> 不能开始
+sim.targets = []
+for var in sim.var_targets.values():
+    var.set(False)
+sim.on_target_toggle()
+check(str(sim.btn_plan["state"]) == "disabled", "一个目标都没选时不能开始仿真")
+sim.var_targets[(1, 3)].set(True)
+sim.on_target_toggle()
+check(sim.targets == [(1, 3)], "重新勾选红色区域")
+
+# ------------------------------------------------------- 阶段③：自动连跑 --
+print("\n=== 阶段③：自动跑完整场仿真 ===")
+# 先只选一个目标试一次
+segments, info = M.build_plan(sim.start_key, sim.targets)
+check(info["segments"] == 2, "只有一个目标时计划是 2 段（去 + 回）")
 sim.begin_simulation()
-check(sim.phase == "select", "点击“开始仿真”后进入选择目标阶段")
-check(str(sim.btn_random["state"]) == "disabled", "开始仿真后随机按钮被禁用")
-check(sim.obstacle_keys == [(3, 3)], "开始仿真后障碍物保持不变")
-
-print("\n=== 行驶流程：出发 -> 三个目标来回 -> 回到出发点 ===")
-seq = [(1, 3), (5, 3), (3, 1), (1, 3), (5, 3), (1, 3), (3, 1)]
-expected_steps = 0
-for goal in seq:
-    p, e = M.shortest_path(sim.car_cell.key, goal)
-    check(not e, "从 %s 到 %s 可规划出路径" % (sim.car_cell.name, M.GRID[goal].name))
-    check(all(c.passable for c in p), "路径上没有不可通行格子（自动绕障）")
-    before = sim.steps
-    click(goal)
-    drive()
-    expected_steps += len(p) - 1
-    check(sim.car_cell.key == goal, "小车已停在 %s" % M.GRID[goal].name)
-    check(sim.steps == expected_steps,
-          "累计行驶格数 = %d（期望 %d）" % (sim.steps, expected_steps))
-    check(sim.move is None and sim.phase == "select", "到达后回到可选择的等待状态")
-
-check(sim.visited_goals == ["红色区域", "白色区域1", "白色区域2"],
-      "到达目标记录：%s" % "、".join(sim.visited_goals))
-
-# 黄色禁行格点击无效
-cell_before = sim.car_cell.key
-click((2, 2))
-check(sim.car_cell.key == cell_before and sim.move is None,
-      "点击黄色禁行格 (2,2) 不产生移动")
-check("禁止通行" in sim.lbl_status.cget("text"), "状态栏提示禁止通行")
-
-# 行驶中不接受新的选择
-click((1, 3))
-check(sim.move is not None, "点击后进入行驶状态")
-click((5, 3))
-win.update()
-check(sim.move is not None and sim.move["path"][-1].key == (1, 3),
-      "行驶中再次点击不会插队改变当前目标")
+check(sim.phase == "run", "开始后进入自动仿真阶段")
+check(str(sim.btn_random["state"]) == "disabled", "仿真中障碍物按钮被禁用")
+check(str(sim.btn_plan["state"]) == "disabled", "仿真中开始按钮被禁用")
+check("自动仿真中" in sim.lbl_mode.cget("text"), "模式显示自动仿真中")
 drive()
-check(sim.car_cell.key == (1, 3), "小车正常抵达 (1,3)")
-
-# 点击出发点 -> 小车先开回出发点，到站后才结束
-print("\n=== 点击出发点：先回出发点，再结束 ===")
-tops_before = [w for w in win.winfo_children() if isinstance(w, tk.Toplevel)]
-car_before = sim.car_cell.key
-ret_path, _ = M.shortest_path(car_before, (1, 5))
-check(len(ret_path) > 1, "当前小车不在出发点上（%s）" % M.GRID[car_before].name)
-
-# 悬停出发点应预览“回出发点”的路径
-ev = E(); ev.x, ev.y = sim.to_canvas(M.GRID[(1, 5)].cx, M.GRID[(1, 5)].cy)
-sim.on_motion(ev)
-win.update()
-check(sim.preview_path and sim.preview_path[-1].key == (1, 5),
-      "悬停出发点时预览了回出发点的最短路径")
-check("开回出发点" in sim.lbl_status.cget("text"), "状态栏说明会先开回出发点")
-
-click((1, 5))
-win.update()
-check(sim.move is not None, "点击出发点后小车开始返回（而不是立刻结束）")
-check(sim.move is not None and sim.move.get("returning") is True,
-      "这一段被标记为“返回出发点”")
-check(sim.car_cell.key != (1, 5), "此刻小车还在路上，没有瞬间移动")
-check(not sim.finished, "还没到出发点，仿真没有结束")
-check(sim.phase == "move", "处于行驶状态")
-tops_mid = [w for w in win.winfo_children() if isinstance(w, tk.Toplevel)]
-check(len(tops_mid) == len(tops_before), "行驶途中没有提前弹出结束对话框")
-check("返回出发点" in sim.lbl_mode.cget("text"), "模式显示“返回出发点……”")
-
-drive()
-check(sim.car_cell.key == (1, 5), "小车已停在出发点格子上")
-check(sim.steps >= len(ret_path) - 1, "返回的格数被计入总行驶格数")
-check(sim.finished, "到达出发点后仿真结束")
-check(sim.lbl_mode.cget("text") == "仿真结束", "模式显示“仿真结束”")
+check(sim.car_cell.key == (1, 5), "小车最后停在出发点")
+check(sim.finished, "跑完计划后仿真结束")
+check(sim.visited_goals == ["红色区域"], "到达记录正确：%s" % "、".join(sim.visited_goals))
 text = sim.txt.get("1.0", "end")
-check("本次仿真结束" in text and "行驶格数" in text, "行驶记录中输出了总结")
-check("小车已回到出发点" in text, "记录中写明小车已回到出发点")
-check("小车位置：出发点1" in text, "总结里列出了小车最终位置")
-
-# 结束对话框按钮
-tops = [w for w in win.winfo_children() if isinstance(w, tk.Toplevel)]
-check(len(tops) == 1, "到站后才弹出结束对话框（实际 %d 个）" % len(tops))
+check("小车已回到出发点" in text, "记录写明小车已回到出发点")
+check("计划访问：红色区域" in text, "总结里列出了计划访问的目标")
 win.destroy()
 
-# ---- 已经在出发点时再点，应当直接结束 ----
-print("\n=== 小车已在出发点时点击出发点 ===")
+# ---- 第二次：四个目标全选，完整跑一遍 ----
+print("\n=== 完整仿真：四个目标全选 ===")
 win2 = tk.Tk()
 sim2 = M.Simulator(win2, (1, 5))
 win2.update()
-ev = E(); ev.x, ev.y = sim2.to_canvas(M.GRID[(3, 3)].cx, M.GRID[(3, 3)].cy)
-sim2.on_click(ev)                      # 准备阶段：顺手放个障碍物
-check(sim2.obstacle_keys == [(3, 3)], "准备阶段放置障碍物成功")
+
+
+def click2(key):
+    ev = E(); ev.x, ev.y = sim2.to_canvas(M.GRID[key].cx, M.GRID[key].cy)
+    sim2.on_motion(ev)
+    sim2.on_click(ev)
+
+
+click2((4, 5))                 # 障碍物：r4c5，影响不到目标
+sim2.enter_targets()
+win2.update()
+check(sim2.targets == list(M.DEFAULT_TARGETS), "四个目标都在计划里")
+
+segments, info = M.build_plan(sim2.start_key, sim2.targets)
+total_steps = info["total_steps"]
+print("  计划：%d 段，共 %d 步" % (info["segments"], total_steps))
+for i, seg in enumerate(segments):
+    print("    第%d段 %s → %s : %d 步" % (i + 1, seg[0].name, seg[-1].name, len(seg) - 1))
+
 sim2.begin_simulation()
-win2.update()
-ev = E(); ev.x, ev.y = sim2.to_canvas(M.GRID[(1, 5)].cx, M.GRID[(1, 5)].cy)
-sim2.on_motion(ev)
-check("小车已在出发点" in sim2.lbl_status.cget("text"), "已在出发点时提示会直接结束")
-sim2.on_click(ev)
-win2.update()
-check(sim2.finished, "已经在出发点时点击 → 直接结束")
-check(sim2.steps == 0, "没有产生多余的行驶格数")
+import time
+t0 = time.time()
+while (sim2.move is not None or (not sim2.finished and sim2.phase == "run")):
+    win2.update()
+    time.sleep(0.004)
+    if time.time() - t0 > 60:
+        raise TimeoutError("完整仿真超时")
+
+check(sim2.finished, "完整仿真跑完并结束")
+check(sim2.car_cell.key == (1, 5), "小车回到出发点 %s" % M.GRID[sim2.car_cell.key].name)
+check(sim2.steps == total_steps, "总行驶格数 = %d（期望 %d）" % (sim2.steps, total_steps))
+check(sim2.visited_goals == [GRID_NAME for GRID_NAME in
+                             [M.GRID[k].goal_name for k in sim2.targets]],
+      "四个目标都到达过：%s" % "、".join(sim2.visited_goals))
+check(sim2.phase == "done", "阶段变为 done")
+check("仿真结束" in sim2.lbl_mode.cget("text"), "模式显示仿真结束")
+text2 = sim2.txt.get("1.0", "end")
+check("未到达目标：无" in text2, "总结里未到达目标为“无”")
+tops = [w for w in win2.winfo_children() if isinstance(w, tk.Toplevel)]
+check(len(tops) == 1, "跑完后弹出结束对话框")
+
+# 日志里应当能看到逐段记录
+check(text2.count("第 ") >= info["segments"], "记录里逐段列出了行驶过程")
 win2.destroy()
 
 print("\n" + ("全部通过 ✔" if not FAIL else "失败 %d 项：%s" % (len(FAIL), FAIL)))

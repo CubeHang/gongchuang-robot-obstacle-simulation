@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
-"""无人值守演示：自动随机放置障碍物 -> 开始仿真 -> 依次跑目标 -> 回到出发点。
+"""无人值守演示：随机障碍物 → 勾选目标区域 → 自动跑完整场仿真并回到出发点。
 
-完整走一遍新流程（含避障），不需要人工点击，也不会占用鼠标。
+走的是界面上真实的三个阶段（对应面板上的 ① ② ③），不需要人工点击，也不会占用鼠标。
 """
 import sys
 import os
@@ -12,7 +12,7 @@ import tkinter as tk
 import map_sim as M
 
 START = (1, 5)
-ROUTE = [(1, 3), (5, 3), (3, 1), (1, 3), (5, 3)]
+TARGETS = list(M.DEFAULT_TARGETS)        # 红色区域 → 橙色区域 → 白色区域1 → 白色区域2
 
 
 class E:
@@ -24,73 +24,58 @@ sim = M.Simulator(win, START)
 win.update()
 
 
-def event_for(key):
+def click_cell(key):
+    """在准备阶段点击某格（放/取消障碍物）。"""
     ev = E()
     ev.x, ev.y = sim.to_canvas(M.GRID[key].cx, M.GRID[key].cy)
-    return ev
-
-
-def click(key):
-    sim.on_motion(event_for(key))
-    sim.on_click(event_for(key))
-
-
-def run_until_still(limit=20.0):
-    """推进 Tk 事件循环直到小车停下（窗口被手动关掉时直接结束）。"""
-    t0 = time.time()
-    while sim.move is not None and time.time() - t0 < limit:
-        try:
-            win.update()
-        except tk.TclError:
-            return False
-        time.sleep(0.01)
-    return True
+    sim.on_motion(ev)
+    sim.on_click(ev)
 
 
 print("出发点：%s" % M.GRID[START].name, flush=True)
 
-# ---- 阶段一：随机放置障碍物（模拟比赛） ----
+# ---- 阶段①：随机放置障碍物（模拟比赛） ----
 sim.randomize_obstacles()
 win.update()
-print("障碍物：%s" % "、".join(M.GRID[k].name for k in sim.obstacle_keys), flush=True)
+print("障碍物：%s" % ("、".join(M.GRID[k].name for k in sim.obstacle_keys) or "无"), flush=True)
 assert sim.obstacle_keys, "随机放置应当成功"
-ok, bad = M.reachable_goals(START)
-assert not bad, "随机放置后目标应全部可达，实际不可达：%s" % bad
 
-# ---- 阶段二：开始仿真 ----
+# ---- 阶段②：勾选目标区域 ----
+sim.enter_targets()
+win.update()
+for key, var in sim.var_targets.items():
+    var.set(key in TARGETS)
+sim.on_target_toggle()
+win.update()
+print("访问顺序：%s" % M.target_selection_text(sim.targets), flush=True)
+
+segs, info = M.build_plan(sim.start_key, sim.targets)
+assert not info["error"], info["error"]
+for i, seg in enumerate(segs):
+    print("  第%d段 %s → %s : %d 步" % (i + 1, seg[0].name, seg[-1].name, len(seg) - 1), flush=True)
+print("预计共 %d 步（%d 段）" % (info["total_steps"], info["segments"]), flush=True)
+
+# ---- 阶段③：开始仿真，一次跑完 ----
 sim.begin_simulation()
 win.update()
-assert sim.phase == "select", "开始仿真后应处于选择目标阶段"
-print("已开始仿真（障碍物 %d 个）" % len(sim.obstacle_keys), flush=True)
+assert sim.phase == "run", "开始后应处于自动仿真阶段"
 
-# ---- 阶段三：逐个目标行驶 ----
-for goal in ROUTE:
-    path, err = M.shortest_path(sim.car_cell.key, goal)
-    assert not err, err
-    print("→ %s：%d 格  %s" % (M.GRID[goal].name, len(path),
-                               " → ".join(c.name for c in path)), flush=True)
-    assert all(c.passable for c in path), "路径不能穿过障碍物"
-    click(goal)
-    if not run_until_still():
+t0 = time.time()
+while (sim.move is not None or (not sim.finished and sim.phase == "run")):
+    try:
+        win.update()
+    except tk.TclError:
         print("窗口被关闭，演示结束", flush=True)
         sys.exit(0)
-    print("   已到达，累计行驶 %d 格" % sim.steps, flush=True)
+    time.sleep(0.004)
+    if time.time() - t0 > 120:
+        raise TimeoutError("仿真超时")
 
-print("回到出发点 %s（小车先开回去，到站后才结束）" % M.GRID[START].name, flush=True)
-path, _ = M.shortest_path(sim.car_cell.key, START)
-print("→ %s：%d 格" % (M.GRID[START].name, len(path)), flush=True)
-click(START)
-try:
-    win.update()
-except tk.TclError:
-    print("窗口已关闭", flush=True)
-assert not sim.finished, "还没到出发点，不应提前结束"
-assert sim.move is not None and sim.move.get("returning"), "这一段应是返回出发点"
-run_until_still()
-assert sim.car_cell.key == START, "小车应停在出发点，实际 %s" % (sim.car_cell.key,)
-assert sim.finished, "到达出发点后才结束仿真"
-print("小车已回到出发点，仿真结束，累计行驶 %d 格，到达过：%s"
-      % (sim.steps, "、".join(sim.visited_goals)), flush=True)
+assert sim.car_cell.key == START, "小车应回到出发点，实际 %s" % (sim.car_cell.key,)
+assert sim.finished, "跑完计划后应结束"
+assert sim.steps == info["total_steps"], "步数 %d ≠ 计划 %d" % (sim.steps, info["total_steps"])
+print("✔ 自动仿真结束：小车已回到 %s，共行驶 %d 步，到达过：%s"
+      % (M.GRID[START].name, sim.steps, "、".join(sim.visited_goals)), flush=True)
 
 # 停 3 秒展示结束总结，再关掉（期间窗口可能被手动关闭）
 t0 = time.time()

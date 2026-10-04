@@ -18,16 +18,21 @@ for fam in ("Microsoft YaHei", "SimHei", "DengXian"):
         pass
 matplotlib.rcParams["axes.unicode_minus"] = False
 
-ROUTE = [(1, 5), (1, 3), (5, 3), (3, 1), (1, 3), (5, 3)]
+START = (1, 5)
+TARGETS = list(M.DEFAULT_TARGETS)        # ① 红色 → ② 橙色 → ③ 白色1 → ④ 白色2 → 回出发点
+ROUTE = [START] + TARGETS + [START]
 # 本图演示的障碍物：挡住出发点1 到红色区域的直路，逼出绕行路线
 OBSTACLES = [(1, 4)]
 
-M.set_active_start(ROUTE[0])
+M.set_active_start(START)
 placed = M.place_obstacles(OBSTACLES)
-ok, bad = M.reachable_goals(ROUTE[0])
+ok, bad = M.reachable_goals(START)
 assert not bad, "障碍物堵死了目标：%s" % bad
-route_name = " → ".join(M.GRID[k].name for k in ROUTE)
+segments, plan = M.build_plan(START, TARGETS)
+assert not plan["error"], plan["error"]
+route_name = " → ".join(M.GRID[k].name for k in TARGETS)
 obs_name = "、".join(M.GRID[k].name for k in placed)
+print("计划：%s，共 %d 步" % (route_name, plan["total_steps"]))
 
 fig, ax = plt.subplots(figsize=(7.4, 7.4), dpi=130)
 
@@ -50,26 +55,26 @@ for key in placed:
 
 # 路径（逐段，带箭头）
 total = 0
-for i in range(len(ROUTE) - 1):
-    a, b = M.GRID[ROUTE[i]], M.GRID[ROUTE[i + 1]]
-    path, err = M.shortest_path(a.key, b.key)
-    assert not err, err
+for i, path in enumerate(segments):
     total += len(path) - 1
     ax.plot([p.cx for p in path], [p.cy for p in path], "-",
             color="#0b7a1e", lw=3.2, solid_capstyle="round",
-            alpha=0.55 if i else 1.0, zorder=3)
+            alpha=0.5 if i % 2 else 1.0, zorder=3)
     for j in range(len(path) - 1):
         p, q = path[j], path[j + 1]
         ax.add_patch(FancyArrowPatch((p.cx, p.cy), (q.cx, q.cy),
-                                     arrowstyle="-|>", mutation_scale=16,
+                                     arrowstyle="-|>", mutation_scale=14,
                                      color="#0b7a1e", lw=0, zorder=4))
+    a = path[0]
+    is_target = i < len(TARGETS)
     ax.text(a.cx, a.cy, str(i + 1), color="#ffffff", fontsize=11,
             weight="bold", ha="center", va="center", zorder=6,
-            bbox=dict(boxstyle="circle,pad=0.22", fc="#0b7a1e", ec="none"))
+            bbox=dict(boxstyle="circle,pad=0.22",
+                      fc="#0b7a1e" if is_target else "#2563eb", ec="none"))
 
 # 把每一段最短路径经过的格心都用小圆点标出来
-for i in range(len(ROUTE) - 1):
-    for p in M.shortest_path(ROUTE[i], ROUTE[i + 1])[0]:
+for path in segments:
+    for p in path:
         ax.add_patch(Circle((p.cx, p.cy), 26, facecolor="none",
                             edgecolor="#0b7a1e", lw=1.4, zorder=5))
 
@@ -89,8 +94,14 @@ for key in M.START_CELLS:
                                edgecolor="#ffffff", lw=2, zorder=8))
 for key, (name, color, mark) in M.GOAL_INFO.items():
     cell = M.GRID[key]
-    ax.text(cell.cx, cell.cy, mark, color="#ffffff" if mark == "红" else "#20242b",
+    dark = mark in ("1", "2", "橙")
+    ax.text(cell.cx, cell.cy, mark, color="#20242b" if dark else "#ffffff",
             fontsize=15, weight="bold", ha="center", va="center", zorder=8)
+    order = TARGETS.index(key) + 1 if key in TARGETS else 0
+    if order:
+        ax.text(cell.x0 + 26, cell.y0 + 26, str(order), color="#ffffff", fontsize=11,
+                weight="bold", ha="center", va="center", zorder=9,
+                bbox=dict(boxstyle="circle,pad=0.2", fc="#0b7a1e", ec="none"))
     ax.add_patch(plt.Rectangle((cell.x0 + 6, cell.y0 + 6), cell.x1 - cell.x0 - 12,
                                cell.y1 - cell.y0 - 12, fill=False,
                                edgecolor="#ff9f1c", lw=2, ls="--", zorder=8))
@@ -108,11 +119,12 @@ ax.set_xlim(-8, M.MAP_PX_W + 8)
 ax.set_ylim(M.MAP_PX_H + 8, -8)
 ax.set_aspect("equal")
 ax.axis("off")
-ax.set_title("避障最短路：%s\n障碍物：%s　累计 %d 步（绿色箭头为 BFS 最短路径）"
+ax.set_title("完整仿真：%s，最后回到出发点1\n障碍物：%s　按此顺序共 %d 步（绿色箭头为 BFS 最短路径）"
              % (route_name, obs_name or "无", total), fontsize=11)
 plt.tight_layout()
 
 out = os.path.join(os.path.dirname(os.path.abspath(__file__)), "shots", "route_preview.png")
 os.makedirs(os.path.dirname(out), exist_ok=True)
 fig.savefig(out, facecolor="white")
-print("写出", out, "  障碍物 =", placed, "  累计步数 =", total)
+print("写出", out, "  障碍物 =", placed, "  累计步数 =", total,
+      "（%d 段）" % plan["segments"])

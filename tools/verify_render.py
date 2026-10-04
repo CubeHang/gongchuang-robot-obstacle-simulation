@@ -116,9 +116,9 @@ for r in range(1, 6):
 print("格子颜色不匹配数：%d / 25（其中障碍物格 %d 个）" % (bad, n_obs))
 FAIL += bad
 
-# 路径：按图上识别出的障碍物重算 BFS，逐段中点附近应出现绿色像素
+# 路径：按图上识别出的障碍物重算整条计划，逐段中点附近应出现绿色像素
 green = (G > 90) & (G > R + 40) & (G > B + 30)
-route = [(1, 5), (1, 3), (5, 3), (3, 1), (1, 3), (5, 3)]
+route = [M.START_CELLS[0]] + list(M.DEFAULT_TARGETS) + [M.START_CELLS[0]]
 # 用像素识别障碍物：每个格子中心附近取一圈点，多数命中障碍物色才算
 obs_keys = []
 for r in range(1, 6):

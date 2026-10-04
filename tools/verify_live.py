@@ -147,7 +147,7 @@ for r in range(1, 6):
 print("  可见格子中不完全匹配的：%d（其中障碍物格 %d 个）" % (bad, n_obs))
 FAIL += bad
 
-# 绿色小车：应停在红色区域 r1c3 的格心
+# 绿色小车：此刻停在出发点（截图场景停在“目标区域选择”阶段）
 # 注意：深绿色路径线也是偏绿的，这里用连通域取“最大的那块”才是小车
 car_mask = (G > 170) & (G > R + 110) & (G > B + 110)
 ys, xs = np.where(car_mask)
@@ -175,13 +175,13 @@ if len(xs):
     if best:
         gx = sum(p[1] for p in best) / len(best)
         gy = sum(p[0] for p in best) / len(best)
-        cell = M.GRID[(1, 3)]
+        cell = M.GRID[(1, 5)]
         ex, ey = xy(cell.cx, cell.cy)
         d = ((gx - ex) ** 2 + (gy - ey) ** 2) ** 0.5
-        print("\n绿色小车（最大绿色连通域 %d px）质心 (%.0f,%.0f) vs 红色区域格心 (%.0f,%.0f)，偏差 %.1f px（格宽 %.0f px）"
+        print("\n绿色小车（最大绿色连通域 %d px）质心 (%.0f,%.0f) vs 出发点1 格心 (%.0f,%.0f)，偏差 %.1f px（格宽 %.0f px）"
               % (len(best), gx, gy, ex, ey, d, (cell.x1 - cell.x0) * k))
         ok = d < 0.15 * (cell.x1 - cell.x0) * k
-        print("  " + ("✔ 小车停在红色区域格心" if ok else "✘ 小车位置不对"))
+        print("  " + ("✔ 小车停在出发点格心" if ok else "✘ 小车位置不对"))
         FAIL += 0 if ok else 1
     else:
         print("\n✘ 未找到绿色小车")
@@ -190,10 +190,30 @@ else:
     print("\n✘ 未找到绿色小车")
     FAIL += 1
 
-dg = (R < 70) & (G > 85) & (G < 165) & (B < 80)
-print("\n深绿色已规划路径像素 %d %s" % (dg.sum(), "✔" if dg.sum() > 200 else "✘"))
-if dg.sum() <= 200:
+# 计划预览：黄色虚线应当出现，且覆盖到最后一个目标（白色区域2）附近
+yellow_line = (R > 220) & (G > 150) & (G < 215) & (B < 120)
+print("\n黄色计划预览像素 %d %s" % (yellow_line.sum(), "✔" if yellow_line.sum() > 300 else "✘"))
+if yellow_line.sum() <= 300:
     FAIL += 1
+else:
+    segs, info = M.build_plan((1, 5), list(M.DEFAULT_TARGETS))
+    hit_seg = 0
+    for seg in segs:
+        ok_seg = False
+        for j in range(len(seg) - 1):
+            p, q = seg[j], seg[j + 1]
+            midx, midy = (p.cx + q.cx) / 2, (p.cy + q.cy) / 2
+            px_, py_ = xy(midx, midy)
+            x0_, y0_ = max(0, int(px_) - 10), max(0, int(py_) - 10)
+            x1_, y1_ = min(W, int(px_) + 11), min(H, int(py_) + 11)
+            if x1_ > x0_ and y1_ > y0_ and yellow_line[y0_:y1_, x0_:x1_].any():
+                ok_seg = True
+                break
+        hit_seg += 1 if ok_seg else 0
+    print("  计划 %d 段中有 %d 段落在截图可见范围内并有黄色虚线 %s"
+          % (len(segs), hit_seg, "✔" if hit_seg >= 4 else "✘"))
+    if hit_seg < 4:
+        FAIL += 1
 
 print("\n" + ("真实截图校验通过 ✔" if FAIL == 0 else "真实截图校验失败 %d 项" % FAIL))
 sys.exit(1 if FAIL else 0)
