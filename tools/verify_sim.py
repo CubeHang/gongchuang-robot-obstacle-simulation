@@ -9,6 +9,7 @@ import map_sim as M
 
 CH = {M.FLOOR: ".", M.WALL: "Y", M.START: "B", M.GOAL: "G"}
 M.clear_obstacles()          # 本脚本先在“无障碍物”状态下核对地图与最短路
+ORANGE = (3, 5)
 
 print("=== 地图（. 可通行  Y 禁止通行  B 出发点  G 目标地点）===")
 print("      " + "  ".join("c%d" % c for c in range(1, 6)))
@@ -19,6 +20,8 @@ for r in range(1, 6):
         tag = CH[cell.kind]
         if cell.goal_name:
             tag = {"白色区域1": "1", "白色区域2": "2", "红色区域": "R"}[cell.goal_name]
+        elif (r, c) == ORANGE:
+            tag = "橙"
         line.append(tag)
     print("  r%d  " % r + "  ".join(line))
 
@@ -36,6 +39,10 @@ assert M.GRID[(5, 3)].color == M.C_GOAL_WHITE == "#ffffff"
 assert M.GRID[(3, 1)].color == "#ffffff"
 assert M.GRID[(3, 3)].color == M.C_FLOOR == "#c6c7c1"
 assert M.GRID[(1, 1)].color == "#c6c7c1"
+# 第 3 行第 5 列是橙色格子，且仍然是普通可通行格（不是目标、不是禁行区）
+assert M.GRID[(3, 5)].color == M.C_ORANGE == "#ff8c00"
+assert M.GRID[(3, 5)].kind == M.FLOOR and M.GRID[(3, 5)].passable
+assert M.GRID[(3, 5)].goal_name is None
 for k in [(2, 2), (2, 4), (4, 2), (4, 4)]:
     assert M.GRID[k].kind == M.WALL and not M.GRID[k].passable
 

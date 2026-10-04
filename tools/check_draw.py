@@ -54,6 +54,7 @@ EXPECT = {
     (5, 3): "#ffffff",   # 白色区域1（白色目标区）
     (3, 1): "#ffffff",   # 白色区域2（白色目标区）
     (3, 3): "#c6c7c1",   # 普通可通行（灰色）
+    (3, 5): "#ff8c00",   # 橙色格子
 }
 for key, want in EXPECT.items():
     got = color_at_cell(key)

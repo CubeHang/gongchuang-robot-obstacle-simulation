@@ -101,7 +101,7 @@ def sample_at(x, y):
 
 print("\n红/蓝格位置比对：")
 for key, want_hex in (((1, 3), "#eb0301"), ((1, 5), "#0b02cb"), ((3, 1), "#ffffff"),
-                      ((3, 3), "#c6c7c1"), ((1, 4), "#7b3f00")):
+                      ((3, 3), "#c6c7c1"), ((1, 4), "#7b3f00"), ((3, 5), "#ff8c00")):
     cell = M.GRID[key]
     cxp, cyp = xy(cell.cx, cell.cy)
     half = (cell.x1 - cell.x0) * 0.22 * k

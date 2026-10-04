@@ -50,6 +50,7 @@ C_GOAL_WHITE = "#ffffff"  # 白色目标区域
 C_WALL = "#f0d000"        # 禁止通行（黄）
 C_START = "#0b02cb"       # 出发点（蓝）
 C_GOAL_RED = "#eb0301"    # 红色目标
+C_ORANGE = "#ff8c00"      # 橙色格子
 C_OBSTACLE = "#7b3f00"    # 障碍物（棕色）
 C_BAD = "#ff2d2d"         # 放障碍物后目标不可达的告警色
 C_GRID = "#111111"        # 网格黑线
@@ -63,6 +64,11 @@ GOAL_INFO = {
     (1, 3): ("红色区域", C_GOAL_RED, "红"),
     (5, 3): ("白色区域1", C_GOAL_WHITE, "1"),    # 第 5 行第 3 列
     (3, 1): ("白色区域2", C_GOAL_WHITE, "2"),    # 第 3 行第 1 列
+}
+
+# 单独指定底色的格子（保持普通可通行格的身份，不改变通行规则）
+CELL_COLORS = {
+    (3, 5): C_ORANGE,        # 第 3 行第 5 列：橙色
 }
 
 # 当前被选作出发点的格子。比赛规则：两个蓝色格子随机二选一作为出发点，
@@ -149,6 +155,10 @@ def build_grid():
     for key, (name, color, mark) in GOAL_INFO.items():
         g = grid[key]
         g.kind, g.color, g.goal_name, g.mark = GOAL, color, name, mark
+
+    # 单独改底色的格子（仍然是普通可通行格子，只是颜色不同）
+    for key, color in CELL_COLORS.items():
+        grid[key].color = color
 
     return grid
 
