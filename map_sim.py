@@ -313,11 +313,8 @@ def goal_key_by_name(name):
 
 
 def target_selection_text(targets):
-    """按访问顺序列出目标：① 红色区域 → ② 白色区域1 …"""
-    circled = "①②③④⑤⑥⑦⑧⑨"
-    return "、".join("%s %s" % (circled[i] if i < len(circled) else "%d." % (i + 1),
-                              GRID[k].name)
-                     for i, k in enumerate(targets))
+    """行程的文字描述：1.红色区域 → 2.橙色区域 → 3.红色区域 …（同一区域去多次会重复出现）"""
+    return " → ".join("%d.%s" % (i + 1, GRID[k].name) for i, k in enumerate(targets))
 
 
 def build_plan(start_key, targets, returning=True):
@@ -402,6 +399,7 @@ class Simulator:
     """
 
     MAX_OBSTACLES = 2
+    MAX_TARGETS = 12              # 行程长度上限（同一个区域可以重复点，只是防手滑点太多）
 
     def __init__(self, root, start_key, obstacles=None, targets=None):
         self.root = root
@@ -412,15 +410,17 @@ class Simulator:
 
         self.phase = "setup"          # "setup" 障碍物 / "targets" 选目标 / "run" 行驶中
         self.obstacle_keys = []       # 当前放置的障碍物格子
-        # 本次要到达的目标区域，列表顺序 = 访问顺序；默认全选，按 GOAL_INFO 顺序
-        self.targets = list(targets) if targets else list(DEFAULT_TARGETS)
+        # 行程：本次要依次到达的目标区域，可重复；在“选择目标区域”阶段点击地图累加
+        self.targets = []
         self.plan = []                # 行驶计划：每一段的格子列表
         self.plan_info = {}           # 计划汇总（总步数等）
         self.plan_idx = 0             # 当前执行到第几段
         self.move = None              # 当前移动状态
         self.trail = [start_key]      # 走过的格子
         self.steps = 0                # 已走格子数
-        self.visited_goals = []       # 已到达过的目标地点
+        self.visited_goals = []       # 已到达过的目标地点（去重，用于显示）
+        self.visited_count = {}       # 每个目标区域实际到达次数
+        self.plan_visits = {}         # 行程里每个目标区域计划去几次
         self.hover_key = None
         self.preview_path = []
         self.finished = False
@@ -429,6 +429,8 @@ class Simulator:
         clear_obstacles()             # 新的一次仿真从零开始
         if obstacles:                 # 允许外部先摆好障碍物（自动演示用）
             self.obstacle_keys = place_obstacles(obstacles)
+        if targets:                   # 允许外部先设好行程（自动演示用）
+            self.targets = list(targets)
 
         self._build_ui()
         self._draw_static()
@@ -509,33 +511,24 @@ class Simulator:
                                 font=self.f_small, justify="left", wraplength=250)
         self.lbl_obs.pack(anchor="w", pady=(6, 0))
 
-        # ---- ② 选择目标区域（顺序即访问顺序）----
+        # ---- ② 选择目标区域（在地图上依次点，点一次加一次，可重复）----
         self.frm_targets = tk.Frame(panel, bg="#20242b")
-        tk.Label(self.frm_targets, text="勾选本次要到达的目标区域（顺序 = 跑的顺序）",
+        tk.Label(self.frm_targets, text="在地图上依次点击要到达的目标区域（顺序 = 跑的顺序）",
                  bg="#20242b", fg="#98a2b3", font=self.f_small,
-                 wraplength=250, justify="left").pack(anchor="w", pady=(6, 4))
-        self.var_targets = {}
-        self.lbl_target = {}
-        for key, (name, _color, _mark) in GOAL_INFO.items():
-            var = tk.BooleanVar(value=key in self.targets)
-            self.var_targets[key] = var
-            row = tk.Frame(self.frm_targets, bg="#20242b")
-            row.pack(anchor="w", fill="x")
-            cb = tk.Checkbutton(row, text=name, variable=var, command=self.on_target_toggle,
-                                bg="#20242b", fg="#e8ecf1", selectcolor="#39404d",
-                                activebackground="#20242b", activeforeground="#ffffff",
-                                font=self.f_ui, anchor="w", highlightthickness=0)
-            cb.pack(side="left")
-            lbl = tk.Label(row, text="", bg="#20242b", fg="#facc15", font=self.f_small)
-            lbl.pack(side="left", padx=4)
-            self.lbl_target[key] = lbl
+                 wraplength=250, justify="left").pack(anchor="w", pady=(6, 2))
+        tk.Label(self.frm_targets, text="同一个区域可以点多次（表示要去多次）；\n"
+                                        "右下角的数字是“第几次去”，左上角是访问顺序",
+                 bg="#20242b", fg="#6b7685", font=self.f_small,
+                 wraplength=250, justify="left").pack(anchor="w", pady=(0, 4))
         r3 = tk.Frame(self.frm_targets, bg="#20242b")
         r3.pack(anchor="w", fill="x", pady=(4, 0))
-        self.btn_up = self._button(r3, "▲ 提前", lambda: self.move_target(-1))
-        self.btn_up.pack(side="left")
-        self.btn_down = self._button(r3, "▼ 延后", lambda: self.move_target(1))
-        self.btn_down.pack(side="left", padx=6)
-        self.btn_plan = self._button(r3, "③ 开始仿真", self.begin_simulation)
+        self.btn_undo = self._button(r3, "撤销上一个", self.undo_last_target)
+        self.btn_undo.pack(side="left")
+        self.btn_clear_targets = self._button(r3, "清空行程", self.clear_targets)
+        self.btn_clear_targets.pack(side="left", padx=6)
+        r4 = tk.Frame(self.frm_targets, bg="#20242b")
+        r4.pack(anchor="w", fill="x", pady=(6, 0))
+        self.btn_plan = self._button(r4, "③ 开始仿真", self.begin_simulation)
         self.btn_plan.pack(side="left")
         self.lbl_plan = tk.Label(self.frm_targets, text="", bg="#20242b", fg="#7dd3fc",
                                  font=self.f_small, justify="left", wraplength=250)
@@ -681,6 +674,8 @@ class Simulator:
         self.draw_obstacles()
         cx, cy = self.to_canvas(self.car_cell.cx, self.car_cell.cy)
         self.draw_car_at(cx, cy)
+        if self.phase == "targets":
+            self.draw_target_marks()
 
     def draw_obstacles(self):
         """画障碍物，以及“放完之后目标不可达”的告警框。"""
@@ -821,62 +816,121 @@ class Simulator:
         self.frm_targets.pack(anchor="w", fill="x", after=self.nav)
         self.btn_step1.config(state="normal")
         self.btn_step2.config(state="disabled")
-        self.lbl_hint.config(text="① 勾选需要到达的目标区域\n"
-                                  "② “▲ 提前 / ▼ 延后”调整访问顺序\n"
-                                  "③ 点“开始仿真”自动跑完全程并回到出发点")
+        self.lbl_hint.config(text="① 在地图上依次点击目标区域（可重复点同一区域）\n"
+                                  "② “撤销上一个 / 清空行程”可以修改\n"
+                                  "③ 点“③ 开始仿真”自动跑完全程并回到出发点")
         self._refresh_target_panel()
-        self.status("比赛准备②：勾选本次要到达的目标区域。\n"
-                    "勾选先后决定访问顺序，也可以用“▲ 提前 / ▼ 延后”调整。")
+        self.status("比赛准备②：在地图上依次点击要到达的目标区域。\n"
+                    "点一次加入一次，同一个区域可以点多次。")
 
     def _refresh_target_panel(self):
-        # 每个目标显示它在访问顺序里的序号
-        for i, key in enumerate(self.targets):
-            self.lbl_target[key].config(text="第 %d 个" % (i + 1))
-        for key in GOAL_INFO:
-            if key not in self.targets:
-                self.lbl_target[key].config(text="不前往")
-        if not self.targets:
-            self.lbl_plan.config(text="还没有勾选目标区域（至少选 1 个）", fg=C_BAD)
+        """刷新右侧面板与地图上的顺序标记、计划预览。"""
+        n = len(self.targets)
+        if n > self.MAX_TARGETS:
+            self.targets = self.targets[:self.MAX_TARGETS]
+            n = len(self.targets)
+
+        if n == 0:
+            self.lbl_plan.config(text="还没有选择目标区域：\n在地图上点击红色/橙色/白色区域即可加入",
+                                 fg=C_BAD)
             self.btn_plan.config(state="disabled")
+            self.plan, self.plan_info = [], {}
+            self.draw_target_marks()
+            self.canvas.delete("preview")
             return
 
         self.btn_plan.config(state="normal")
         segments, info = build_plan(self.car_cell.key, self.targets)
         if info.get("error"):
-            self.lbl_plan.config(text="⚠ %s\n请回上一步调整障碍物" % info["error"], fg=C_BAD)
+            self.lbl_plan.config(text="⚠ %s\n请调整障碍物或目标顺序" % info["error"], fg=C_BAD)
             self.btn_plan.config(state="disabled")
+            self.plan, self.plan_info = [], info
+            self.draw_target_marks()
+            self.canvas.delete("preview")
             self.status("⚠ %s" % info["error"])
             return
+
         self.plan, self.plan_info = segments, info
+        summary = "、".join("%d.%s" % (i + 1, GRID[k].name.replace("区域", ""))
+                            for i, k in enumerate(self.targets))
         self.lbl_plan.config(
-            text="访问顺序：%s\n预计总里程：%d 步（%d 段）"
-                 % (target_selection_text(self.targets), info["total_steps"], info["segments"]),
+            text="行程（%d 个目标）：\n%s\n预计总里程：%d 步（%d 段）"
+                 % (n, summary, info["total_steps"], info["segments"]),
             fg="#7dd3fc")
-        self.status("已选 %d 个目标：%s\n点“③ 开始仿真”后小车会一次跑完并回到出发点。"
-                    % (len(self.targets), target_selection_text(self.targets)))
+        self.status("行程（%d 个目标）：%s\n预计 %d 步。继续点击可再加，或点“③ 开始仿真”。"
+                    % (n, target_selection_text(self.targets), info["total_steps"]))
         self._draw_plan_preview()
+        self.draw_target_marks()
 
-    def on_target_toggle(self, *_):
-        """勾选框变化 → 更新目标集合与访问顺序。"""
-        for key, var in self.var_targets.items():
-            on = bool(var.get())
-            if on and key not in self.targets:
-                self.targets.append(key)          # 后勾选的排在后面
-                self.log("目标区域加入计划：%s" % GRID[key].name)
-            elif not on and key in self.targets:
-                self.targets.remove(key)
-                self.log("目标区域移出计划：%s" % GRID[key].name)
-        self._refresh_target_panel()
+    def cell_hit_target(self, px, py):
+        """判断画布坐标是否点在某个目标区域格子中心附近（放大点击判定，好点一些）。"""
+        if self.phase != "targets":
+            return None
+        best, best_d = None, None
+        for key in GOAL_INFO:
+            cell = GRID[key]
+            cx, cy = self.to_canvas(cell.cx, cell.cy)
+            r = max((cell.x1 - cell.x0), (cell.y1 - cell.y0)) * self.k * 0.38
+            d = ((px - cx) ** 2 + (py - cy) ** 2) ** 0.5
+            if d <= r and (best_d is None or d < best_d):
+                best, best_d = key, d
+        return best
 
-    def move_target(self, delta):
-        """把选中的某个目标在访问顺序里提前/延后。"""
-        if len(self.targets) < 2:
-            self.status("至少要选 2 个目标才能调顺序。")
+    def add_target(self, key):
+        """把一个目标区域加入行程（允许重复）。"""
+        if key is None or key not in GOAL_INFO:
             return
-        # 用当前焦点/最简单的方式：按列表顺序整体轮转，便于快速调整
-        self.targets = self.targets[delta:] + self.targets[:delta]
-        self.log("访问顺序调整为：%s" % target_selection_text(self.targets))
+        if len(self.targets) >= self.MAX_TARGETS:
+            self.status("行程最多 %d 个目标，已经满了。\n可以“撤销上一个”或“清空行程”。"
+                        % self.MAX_TARGETS)
+            return
+        self.targets.append(key)
+        self.log("第 %d 个目标：%s" % (len(self.targets), GRID[key].name))
         self._refresh_target_panel()
+
+    def undo_last_target(self):
+        if self.phase != "targets":
+            return
+        if not self.targets:
+            self.status("行程已经是空的。")
+            return
+        key = self.targets.pop()
+        self.log("撤销目标：%s" % GRID[key].name)
+        self._refresh_target_panel()
+        self.status("已撤销 %s。当前行程 %d 个目标。" % (GRID[key].name, len(self.targets)))
+
+    def clear_targets(self):
+        if self.phase != "targets":
+            return
+        if self.targets:
+            self.log("清空行程（原有 %d 个目标）" % len(self.targets))
+        self.targets = []
+        self._refresh_target_panel()
+
+    def draw_target_marks(self):
+        """在目标区域上标出访问顺序：左上角是全局序号，右下角是该格第几次去。"""
+        cv = self.canvas
+        cv.delete("mark")
+        visits = {}
+        for i, key in enumerate(self.targets):
+            visits.setdefault(key, []).append(i + 1)
+        for key, orders in visits.items():
+            cell = GRID[key]
+            x0, y0 = self.to_canvas(cell.x0, cell.y0)
+            x1, y1 = self.to_canvas(cell.x1, cell.y1)
+            cv.create_oval(x0 + 6, y0 + 6, x0 + 42, y0 + 42, fill="#0b7a1e",
+                           outline="#ffffff", width=2, tags=("mark",))
+            cv.create_text(x0 + 24, y0 + 24, text=str(orders[0]),
+                           font=self.f_cell, fill="#ffffff", tags=("mark",))
+            if len(orders) > 1:
+                txt = "第" + ",".join(str(o) for o in orders) + "次"
+                cv.create_rectangle(x1 - 78, y1 - 40, x1 - 6, y1 - 6,
+                                    fill="#0b7a1e", outline="#ffffff",
+                                    tags=("mark",))
+                cv.create_text(x1 - 42, y1 - 23, text=txt, font=self.f_small,
+                               fill="#ffffff", tags=("mark",))
+        cv.tag_raise("mark")
+        cv.tag_raise("car")
 
     def _draw_plan_preview(self):
         """把整段计划用黄色虚线一次性画在地图上。"""
@@ -894,10 +948,13 @@ class Simulator:
         if self.phase == "run":
             return
         if self.phase == "setup":
-            self.status("请先勾选要到达的目标区域（点“② 目标区域”）。")
+            self.status("请先在地图上点击目标区域（点“② 目标区域”）。")
             return
         if not self.obstacle_keys:
             self.status("请至少放置 1 个障碍物再开始（点“① 障碍物”）。")
+            return
+        if not self.targets:
+            self.status("还没有选择目标区域：请在地图上依次点击要到达的区域。")
             return
 
         for key in self.targets:                 # 先检查每个目标自己能不能进
@@ -912,14 +969,19 @@ class Simulator:
 
         self.plan, self.plan_info = segments, info
         self.plan_idx = 0
+        self.plan_visits = {}
+        for key in self.targets:
+            self.plan_visits[GRID[key].goal_name] = self.plan_visits.get(GRID[key].goal_name, 0) + 1
+        self.visited_count = {}
         self.phase = "run"
         self.canvas.delete("preview")
+        self.canvas.delete("mark")
         self.btn_random.config(state="disabled")
         self.btn_clear.config(state="disabled")
         self.btn_to_targets.config(state="disabled")
         self.btn_plan.config(state="disabled")
-        self.btn_up.config(state="disabled")
-        self.btn_down.config(state="disabled")
+        self.btn_undo.config(state="disabled")
+        self.btn_clear_targets.config(state="disabled")
         self.btn_step1.config(state="disabled")
         self.btn_step2.config(state="disabled")
         self.btn_finish.config(state="disabled")
@@ -929,7 +991,7 @@ class Simulator:
         self.log("出发点：%s　障碍物：%s"
                  % (self.car_cell.name,
                     "、".join(GRID[k].name for k in self.obstacle_keys) or "无"))
-        self.log("访问顺序：%s" % target_selection_text(self.targets))
+        self.log("行程（%d 个目标）：%s" % (len(self.targets), target_selection_text(self.targets)))
         for line in plan_text(segments, info).split("\n"):
             self.log(line)
         self.status("比赛开始！\n访问顺序：%s\n预计 %d 步，最后回到出发点。"
@@ -1023,18 +1085,19 @@ class Simulator:
                 self.status("%s 不允许放障碍物" % cell.name)
             return
 
-        # ---- 目标区域阶段：鼠标只做说明，勾选在右侧面板 ----
+        # ---- 目标区域阶段：在地图上点目标区域加入行程 ----
         if self.phase == "targets":
-            if cell.goal_name:
-                self.canvas.config(cursor="hand2")
-                order = self.targets.index(cell.key) + 1 if cell.key in self.targets else 0
-                self._highlight(cell, "#4ade80" if order else "#8aa0b8")
-                self.status("%s：%s\n在右侧勾选框里选择是否前往。"
-                            % (cell.name, "第 %d 个访问" % order if order else "当前不在计划内"))
-            else:
+            hit = self.cell_hit_target(event.x, event.y)
+            if hit is None:
                 self.canvas.config(cursor="arrow")
-                self._highlight(cell, "#8aa0b8") if cell.passable else None
-                self.status("本次只需前往勾选的目标区域")
+                self.status("请点击地图上的目标区域：红色区域 / 橙色区域 / 白色区域1 / 白色区域2")
+                return
+            cell = GRID[hit]
+            n_times = self.targets.count(hit)
+            self.canvas.config(cursor="hand2")
+            self._highlight(cell, "#4ade80")
+            self.status("%s：点一下加入行程（第 %d 次去，行程里已有 %d 个目标）"
+                        % (cell.name, n_times + 1, len(self.targets)))
             return
 
         # ---- 仿真阶段：鼠标只做说明 ----
@@ -1079,9 +1142,13 @@ class Simulator:
         if self.phase == "setup":
             self.toggle_obstacle(cell)
             return
-        # 目标区域阶段：勾选在右侧面板里做
+        # 目标区域阶段：点击目标区域就把“去一次”加进行程（可重复）
         if self.phase == "targets":
-            self.status("请在右侧勾选框中选择目标区域（勾选先后决定访问顺序）。")
+            hit = self.cell_hit_target(event.x, event.y)
+            if hit is None:
+                self.status("请点击目标区域格子：红色区域 / 橙色区域 / 白色区域1 / 白色区域2")
+                return
+            self.add_target(hit)
 
     # ---------------------------------------------------------------- 运动 --
     def start_move(self, target, returning=False, auto=False):
@@ -1193,10 +1260,12 @@ class Simulator:
         """自动连跑模式：一段跑完，记录到达并继续下一段。"""
         hit = dest.goal_name
         if hit:
+            self.visited_count[hit] = self.visited_count.get(hit, 0) + 1
             if hit not in self.visited_goals:
                 self.visited_goals.append(hit)
-            self.log("★ 第 %d/%d 段完成，已到达：%s"
-                     % (self.plan_idx + 1, len(self.plan), hit))
+            self.log("★ 第 %d/%d 段完成，已到达：%s（该区域第 %d 次）"
+                     % (self.plan_idx + 1, len(self.plan),
+                        hit, self.visited_count[hit]))
         else:
             self.log("第 %d/%d 段完成，停在 %s"
                      % (self.plan_idx + 1, len(self.plan), dest.name))
@@ -1229,19 +1298,26 @@ class Simulator:
         self.update_stat()
 
         at_start = self.car_cell.key == self.start_key
-        visited = set(self.visited_goals)
         planned = [GRID[k].goal_name for k in self.targets]
-        missing = [n for n in planned if n not in visited]
-        summary = ("出发点：%s\n障碍物：%s\n计划访问：%s\n行驶格数：%d\n小车位置：%s\n"
-                   "已到达目标：%s\n未到达目标：%s"
+        done = []
+        missing = []
+        for name in dict.fromkeys(planned):            # 保持出现顺序、去重
+            need = planned.count(name)
+            got = self.visited_count.get(name, 0)
+            done.append("%s %d/%d" % (name, min(got, need), need))
+            if got < need:
+                missing.append("%s（差 %d 次）" % (name, need - got))
+        summary = ("出发点：%s\n障碍物：%s\n行程（%d 个目标）：%s\n行驶格数：%d\n小车位置：%s\n"
+                   "目标完成情况：%s\n未完成：%s"
                    % (GRID[self.start_key].name,
                       "、".join(GRID[k].name for k in self.obstacle_keys)
                       if self.obstacle_keys else "无",
+                      len(planned),
                       "、".join(planned) if planned else "无",
                       self.steps,
                       GRID[self.start_key].name if at_start else
                       "%s（未回到出发点）" % self.car_cell.name,
-                      "、".join(self.visited_goals) if self.visited_goals else "无",
+                      "；".join(done) if done else "无",
                       "、".join(missing) if missing else "无"))
         if at_start:
             self.log("—— 小车已回到出发点，本次仿真结束 ——")

@@ -19,7 +19,8 @@ for fam in ("Microsoft YaHei", "SimHei", "DengXian"):
 matplotlib.rcParams["axes.unicode_minus"] = False
 
 START = (1, 5)
-TARGETS = list(M.DEFAULT_TARGETS)        # ① 红色 → ② 橙色 → ③ 白色1 → ④ 白色2 → 回出发点
+# 行程：红色区域去两次（演示“同一个目标区域可以被多次经过”）
+TARGETS = [(1, 3), (3, 5), (5, 3), (1, 3), (3, 1), (1, 3)]
 ROUTE = [START] + TARGETS + [START]
 # 本图演示的障碍物：挡住出发点1 到红色区域的直路，逼出绕行路线
 OBSTACLES = [(1, 4)]
@@ -32,7 +33,7 @@ segments, plan = M.build_plan(START, TARGETS)
 assert not plan["error"], plan["error"]
 route_name = " → ".join(M.GRID[k].name for k in TARGETS)
 obs_name = "、".join(M.GRID[k].name for k in placed)
-print("计划：%s，共 %d 步" % (route_name, plan["total_steps"]))
+print("行程：%s，共 %d 步" % (route_name, plan["total_steps"]))
 
 fig, ax = plt.subplots(figsize=(7.4, 7.4), dpi=130)
 
@@ -97,11 +98,17 @@ for key, (name, color, mark) in M.GOAL_INFO.items():
     dark = mark in ("1", "2", "橙")
     ax.text(cell.cx, cell.cy, mark, color="#20242b" if dark else "#ffffff",
             fontsize=15, weight="bold", ha="center", va="center", zorder=8)
-    order = TARGETS.index(key) + 1 if key in TARGETS else 0
-    if order:
-        ax.text(cell.x0 + 26, cell.y0 + 26, str(order), color="#ffffff", fontsize=11,
+    orders = [i + 1 for i, k in enumerate(TARGETS) if k == key]
+    if orders:
+        ax.text(cell.x0 + 26, cell.y0 + 26, str(orders[0]), color="#ffffff", fontsize=11,
                 weight="bold", ha="center", va="center", zorder=9,
                 bbox=dict(boxstyle="circle,pad=0.2", fc="#0b7a1e", ec="none"))
+        if len(orders) > 1:            # 同一区域去多次
+            ax.text(cell.x1 - 46, cell.y1 - 26,
+                    "第" + ",".join(str(o) for o in orders) + "次",
+                    color="#ffffff", fontsize=9, weight="bold",
+                    ha="center", va="center", zorder=9,
+                    bbox=dict(boxstyle="round,pad=0.25", fc="#0b7a1e", ec="#ffffff"))
     ax.add_patch(plt.Rectangle((cell.x0 + 6, cell.y0 + 6), cell.x1 - cell.x0 - 12,
                                cell.y1 - cell.y0 - 12, fill=False,
                                edgecolor="#ff9f1c", lw=2, ls="--", zorder=8))

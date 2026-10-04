@@ -94,10 +94,24 @@ check(sim.canvas.type([i for i in sim.canvas.find_withtag("obs")
                        if sim.canvas.type(i) == "text"][0]) == "text",
       "障碍物上有文字标注")
 
-# ---- 阶段②：目标区域阶段，检查计划预览虚线 ----
+# ---- 阶段②：目标区域阶段，点击目标区域加入行程 ----
 sim.enter_targets()
 win.update()
 check(sim.phase == "targets", "进入目标区域阶段")
+check(sim.targets == [], "刚进入时行程为空")
+
+
+def click_goal(key):
+    ev = E(); ev.x, ev.y = sim.to_canvas(M.GRID[key].cx, M.GRID[key].cy)
+    sim.on_motion(ev)
+    sim.on_click(ev)
+    win.update()
+
+
+TRIP = [(1, 3), (3, 5), (5, 3), (1, 3)]      # 红色区域去两次
+for key in TRIP:
+    click_goal(key)
+check(sim.targets == TRIP, "点选后的行程：%s" % M.target_selection_text(sim.targets))
 preview_items = list(sim.canvas.find_withtag("preview"))
 check(len(preview_items) > 0, "地图上画出计划预览（%d 个图元）" % len(preview_items))
 preview_lines = [i for i in preview_items if sim.canvas.type(i) == "line"]
@@ -114,6 +128,13 @@ for i, seg in enumerate(sim.plan):
         if abs(coords[2 * j] - cx) > 1 or abs(coords[2 * j + 1] - cy) > 1:
             ok = False
 check(ok, "每段预览折线的顶点都与 BFS 最短路径格心一致")
+
+# 访问顺序标记：红色区域访问 2 次，应出现“第1,4次”角标
+marks = sim.canvas.find_withtag("mark")
+mark_texts = [sim.canvas.itemcget(i, "text") for i in marks
+              if sim.canvas.type(i) == "text"]
+check(any("第1,4次" in t for t in mark_texts),
+      "重复访问的目标标出“第1,4次”：%s" % mark_texts)
 
 # 悬停在目标区域上给出提示
 ev = E(); ev.x, ev.y = sim.to_canvas(M.GRID[(3, 5)].cx, M.GRID[(3, 5)].cy)

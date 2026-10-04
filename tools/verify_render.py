@@ -103,8 +103,8 @@ for r in range(1, 6):
         is_obs = hit_obs > hit_base
         if is_obs:
             n_obs += 1
-        # 障碍物格子里有“障碍”文字，允许 1 个角被文字盖住
-        need = 3 if is_obs else 4
+        # 障碍物格里有“障碍”文字、目标格角上有“第几次去”角标，都允许 1 个角被盖住
+        need = 4 if (not is_obs and not cell.goal_name) else 3
         ok = len(vis) == 4 and max(hit_base, hit_obs) >= need
         if not ok:
             bad += 1
@@ -118,7 +118,8 @@ FAIL += bad
 
 # 路径：按图上识别出的障碍物重算整条计划，逐段中点附近应出现绿色像素
 green = (G > 90) & (G > R + 40) & (G > B + 30)
-route = [M.START_CELLS[0]] + list(M.DEFAULT_TARGETS) + [M.START_CELLS[0]]
+TARGETS = [(1, 3), (3, 5), (5, 3), (1, 3), (3, 1), (1, 3)]
+route = [M.START_CELLS[0]] + TARGETS + [M.START_CELLS[0]]
 # 用像素识别障碍物：每个格子中心附近取一圈点，多数命中障碍物色才算
 obs_keys = []
 for r in range(1, 6):

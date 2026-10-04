@@ -12,7 +12,8 @@ import tkinter as tk
 import map_sim as M
 
 START = (1, 5)
-TARGETS = list(M.DEFAULT_TARGETS)        # 红色区域 → 橙色区域 → 白色区域1 → 白色区域2
+# 行程示例：红色区域去两次（同一个目标区域可以重复到达）
+TARGETS = [(1, 3), (3, 5), (5, 3), (3, 1), (1, 3)]
 
 
 class E:
@@ -40,14 +41,14 @@ win.update()
 print("障碍物：%s" % ("、".join(M.GRID[k].name for k in sim.obstacle_keys) or "无"), flush=True)
 assert sim.obstacle_keys, "随机放置应当成功"
 
-# ---- 阶段②：勾选目标区域 ----
+# ---- 阶段②：在地图上依次点击目标区域（红/橙/白1/白2/红） ----
 sim.enter_targets()
 win.update()
-for key, var in sim.var_targets.items():
-    var.set(key in TARGETS)
-sim.on_target_toggle()
+for key in TARGETS:
+    click_cell(key)
 win.update()
-print("访问顺序：%s" % M.target_selection_text(sim.targets), flush=True)
+print("行程（%d 个目标）：%s" % (len(sim.targets), M.target_selection_text(sim.targets)), flush=True)
+assert sim.targets == TARGETS, "行程应当与点选一致"
 
 segs, info = M.build_plan(sim.start_key, sim.targets)
 assert not info["error"], info["error"]
@@ -74,8 +75,10 @@ while (sim.move is not None or (not sim.finished and sim.phase == "run")):
 assert sim.car_cell.key == START, "小车应回到出发点，实际 %s" % (sim.car_cell.key,)
 assert sim.finished, "跑完计划后应结束"
 assert sim.steps == info["total_steps"], "步数 %d ≠ 计划 %d" % (sim.steps, info["total_steps"])
-print("✔ 自动仿真结束：小车已回到 %s，共行驶 %d 步，到达过：%s"
-      % (M.GRID[START].name, sim.steps, "、".join(sim.visited_goals)), flush=True)
+assert sim.visited_count.get("红色区域") == 2, "红色区域应当到达 2 次"
+print("✔ 自动仿真结束：小车已回到 %s，共行驶 %d 步，到达次数：%s"
+      % (M.GRID[START].name, sim.steps,
+         "、".join("%s×%d" % (k, v) for k, v in sim.visited_count.items())), flush=True)
 
 # 停 3 秒展示结束总结，再关掉（期间窗口可能被手动关闭）
 t0 = time.time()

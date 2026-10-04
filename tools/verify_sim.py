@@ -195,7 +195,7 @@ assert not bad, "清空障碍物后目标必须全部可达"
 print("  ✔ 清空障碍物后：%s 全部可达" % "、".join(ok))
 
 # ---------------------------------------------------------------------------
-# 行驶计划（先设定目标，再一次性跑完）
+# 行驶计划（先在地图上点选目标，再一次性跑完；行程长度不限、可重复）
 # ---------------------------------------------------------------------------
 print("\n=== 行驶计划 build_plan ===")
 M.clear_obstacles()
@@ -203,10 +203,10 @@ M.set_active_start((1, 5))
 segs, info = M.build_plan((1, 5), M.DEFAULT_TARGETS)
 assert not info["error"], info["error"]
 order = [seg[-1].goal_name for seg in segs[:-1]]
-print("  访问顺序：%s" % " → ".join(order))
+print("  行程：%s" % " → ".join(order))
 print("  返回出发点：%s" % segs[-1][-1].name)
 print("  共 %d 段，%d 步" % (info["segments"], info["total_steps"]))
-assert order == [M.GRID[k].goal_name for k in M.DEFAULT_TARGETS], "必须按设定顺序访问"
+assert order == [M.GRID[k].goal_name for k in M.DEFAULT_TARGETS], "必须按点选顺序访问"
 assert segs[-1][-1].key == (1, 5), "最后一段必须回到出发点"
 # 逐段核对：每段都是该段起终点之间的最短路径
 for seg in segs:
@@ -216,27 +216,37 @@ for seg in segs:
 assert info["total_steps"] == sum(len(s) - 1 for s in segs)
 print("  ✔ 每一段都是 BFS 最短路径，总步数 = %d" % info["total_steps"])
 
-# 换顺序 -> 步数可能变化，但都要能跑
-segs2, info2 = M.build_plan((1, 5), [(3, 1), (5, 3), (1, 3), (3, 5)])
-assert not info2["error"]
-print("  换个顺序：%s，共 %d 步"
-      % (" → ".join(seg[-1].goal_name for seg in segs2[:-1]), info2["total_steps"]))
+print("\n=== 行程长度不限、允许重复 ===")
+trip = [(1, 3), (3, 5), (1, 3), (5, 3), (3, 1), (1, 3), (5, 3), (1, 3)]
+segs2, info2 = M.build_plan((1, 5), trip)
+assert not info2["error"], info2["error"]
+print("  行程（%d 个目标）：%s" % (len(trip), M.target_selection_text(trip)))
+print("  共 %d 段，%d 步" % (info2["segments"], info2["total_steps"]))
+assert info2["segments"] == len(trip) + 1, "N 个目标 = N+1 段（最后回出发点）"
+assert [seg[-1].key for seg in segs2[:-1]] == trip, "访问顺序必须与行程完全一致"
+print("  ✔ 8 个目标（红色区域 4 次）全部按顺序排入计划，总步数 %d" % info2["total_steps"])
 
 # 只选一个目标
 segs3, info3 = M.build_plan((1, 5), [(3, 5)])
 assert info3["segments"] == 2, "去 + 回 = 2 段"
-print("  只选橙色区域：%d 段，%d 步" % (info3["segments"], info3["total_steps"]))
+print("  只去橙色区域：%d 段，%d 步" % (info3["segments"], info3["total_steps"]))
+
+# 连续两个相同目标：位置重合，不额外走路
+segs4, info4 = M.build_plan((1, 5), [(1, 3), (1, 3), (1, 3)])
+print("  连续 3 次红色区域：%d 段，%d 步（连续同一目标不额外走路）"
+      % (info4["segments"], info4["total_steps"]))
+assert info4["total_steps"] == 4, "起点→红 2 步 + 红→起点 2 步"
 
 # 一个目标都不选
-segs4, info4 = M.build_plan((1, 5), [])
-assert info4.get("error") and not segs4
-print("  不选目标：正确报错「%s」" % info4["error"])
+segs5, info5 = M.build_plan((1, 5), [])
+assert info5.get("error") and not segs5
+print("  不选目标：正确报错「%s」" % info5["error"])
 
 # 障碍物挡住去路时计划要报错
 M.place_obstacles([(1, 4), (2, 5)])
-segs5, info5 = M.build_plan((1, 5), M.DEFAULT_TARGETS)
-assert info5.get("error"), "堵死出发点时计划必须报错"
-print("  堵死出发点：正确报错「%s」" % info5["error"])
+segs6, info6 = M.build_plan((1, 5), M.DEFAULT_TARGETS)
+assert info6.get("error"), "堵死出发点时计划必须报错"
+print("  堵死出发点：正确报错「%s」" % info6["error"])
 M.clear_obstacles()
 
 print("\n全部检查结束。")

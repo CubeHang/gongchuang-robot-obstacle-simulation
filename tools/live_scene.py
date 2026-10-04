@@ -14,6 +14,9 @@ os.makedirs(os.path.dirname(READY), exist_ok=True)
 if os.path.exists(READY):
     os.remove(READY)
 
+# 行程示例：红色区域去两次，其余各一次
+TRIP = [(1, 3), (3, 5), (5, 3), (1, 3)]
+
 
 class E:
     pass
@@ -38,14 +41,19 @@ sim.on_click(event_for((1, 4)))
 win.update()
 assert sim.obstacle_keys == [(1, 4)], "障碍物应为 r1c4"
 
-# 阶段②：勾选四个目标区域，停在“计划预览”状态
+# 阶段②：在地图上依次点击目标区域（红色区域点两次），停在“行程已排好”的状态
 sim.enter_targets()
 win.update()
 assert sim.phase == "targets", "应停在目标区域选择阶段"
-assert sim.targets == list(M.DEFAULT_TARGETS), "四个目标区域都应勾选"
+for key in TRIP:
+    ev = event_for(key)
+    sim.on_motion(ev)
+    sim.on_click(ev)
+    win.update()
+assert sim.targets == TRIP, "行程应当与点选一致"
 segs, info = M.build_plan(sim.start_key, sim.targets)
 assert not info["error"], info["error"]
-print("计划：%s，共 %d 步" % (M.target_selection_text(sim.targets), info["total_steps"]), flush=True)
+print("行程：%s，共 %d 步" % (M.target_selection_text(sim.targets), info["total_steps"]), flush=True)
 
 with open(READY, "w", encoding="utf-8") as f:
     f.write("ready")
