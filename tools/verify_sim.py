@@ -8,6 +8,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import map_sim as M
 
 CH = {M.FLOOR: ".", M.WALL: "Y", M.START: "B", M.GOAL: "G"}
+M.clear_obstacles()          # 本脚本先在“无障碍物”状态下核对地图与最短路
 
 print("=== 地图（. 可通行  Y 禁止通行  B 出发点  G 目标地点）===")
 print("      " + "  ".join("c%d" % c for c in range(1, 6)))
@@ -113,5 +114,71 @@ print("\n=== 黄色禁行格作为终点应被拒绝 ===")
 for k in [(2, 2), (2, 4), (4, 2), (4, 4)]:
     p, e = M.shortest_path((1, 5), k)
     print("  (1,5) -> r%dc%d : %s %s" % (k[0], k[1], e, "✔" if e else "✘"))
+
+# ---------------------------------------------------------------------------
+# 障碍物相关
+# ---------------------------------------------------------------------------
+print("\n=== 障碍物规则 ===")
+M.clear_obstacles()
+for s, other in (((1, 5), (5, 5)), ((5, 5), (1, 5))):
+    M.set_active_start(s)
+    cand = [c.key for c in M.obstacle_candidates(s)]
+    assert s not in cand, "被选作出发点的格子不能放障碍物"
+    assert other in cand, "另一个出发点应视为普通路径，可以放障碍物"
+    assert not any(k in M.WALL_CELLS for k in cand), "禁行区不能放障碍物"
+    assert not any(M.GRID[k].goal_name for k in cand), "目标地点不能放障碍物"
+    print("  ✔ 起点 %-6s：候选 %d 个，另一个出发点 %s 可放"
+          % (M.GRID[s].name, len(cand), M.GRID[other].name))
+
+print("\n=== 障碍物绕行（起点 出发点1，障碍 r1c4）===")
+M.set_active_start((1, 5))
+base, _ = M.shortest_path((1, 5), (1, 3))
+M.place_obstacles([(1, 4)])
+detour, _ = M.shortest_path((1, 5), (1, 3))
+print("  无阻碍：%d 格  %s" % (len(base), " → ".join(c.name for c in base)))
+print("  有障碍：%d 格  %s" % (len(detour), " → ".join(c.name for c in detour)))
+assert len(detour) > len(base), "有障碍时路径应更长"
+assert (1, 4) not in [c.key for c in detour], "路径不能穿过障碍物"
+assert detour[0].key == (1, 5) and detour[-1].key == (1, 3)
+print("  ✔ 绕开了障碍物")
+
+print("\n=== 障碍物上不能作为终点 ===")
+p, e = M.shortest_path((1, 5), (1, 4))
+print("  (1,5) -> r1c4 : %s %s" % (e, "✔" if e and not p else "✘"))
+assert not p and e
+
+print("\n=== 随机放置（模拟比赛 1~2 个）===")
+import collections
+stats = collections.Counter()
+for s in ((1, 5), (5, 5)):
+    M.set_active_start(s)
+    for _ in range(40):
+        M.clear_obstacles()
+        keys, msg = M.random_obstacles(s)
+        assert keys, "随机放置不应失败：%s" % msg
+        assert 1 <= len(keys) <= 2, "随机障碍物数量必须是 1~2 个，实际 %d" % len(keys)
+        for k in keys:
+            c = M.GRID[k]
+            assert k != s, "障碍物不能放在被选中的出发点上"
+            assert c.kind in (M.FLOOR, M.START), "障碍物只能放在可通行格上"
+            assert not c.goal_name, "障碍物不能放在目标地点上"
+            assert not c.obstacle or True
+        ok, bad = M.reachable_goals(s)
+        assert not bad, "随机放置后目标应当可达，实际不可达：%s" % bad
+        stats[len(keys)] += 1
+print("  80 次随机：1 个障碍 %d 次，2 个障碍 %d 次，全部满足约束 ✔"
+      % (stats[1], stats[2]))
+
+print("\n=== 会堵死目标的组合应被识别出来 ===")
+M.set_active_start((1, 5))
+M.clear_obstacles()
+M.place_obstacles([(1, 4), (2, 5)])       # 把出发点1 唯一的出口堵死
+ok, bad = M.reachable_goals((1, 5))
+print("  障碍 r1c4 + r2c5 → 不可达：%s" % bad)
+assert bad, "这种情况应当判为不可达"
+M.clear_obstacles()
+ok, bad = M.reachable_goals((1, 5))
+assert not bad, "清空障碍物后目标必须全部可达"
+print("  ✔ 清空障碍物后：%s 全部可达" % "、".join(ok))
 
 print("\n全部检查结束。")

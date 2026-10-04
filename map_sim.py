@@ -24,6 +24,7 @@
 运行：  python map_sim.py
 """
 
+import random
 import tkinter as tk
 from tkinter import font as tkfont
 from collections import deque
@@ -49,6 +50,8 @@ C_GOAL_WHITE = "#ffffff"  # 白色目标区域
 C_WALL = "#f0d000"        # 禁止通行（黄）
 C_START = "#0b02cb"       # 出发点（蓝）
 C_GOAL_RED = "#eb0301"    # 红色目标
+C_OBSTACLE = "#7b3f00"    # 障碍物（棕色）
+C_BAD = "#ff2d2d"         # 放障碍物后目标不可达的告警色
 C_GRID = "#111111"        # 网格黑线
 C_CAR = "#18c832"         # 小车（绿）
 C_PATH = "#0e7a1e"        # 规划路径
@@ -62,6 +65,15 @@ GOAL_INFO = {
     (3, 1): ("白色区域2", C_GOAL_WHITE, "2"),    # 第 3 行第 1 列
 }
 
+# 当前被选作出发点的格子。比赛规则：两个蓝色格子随机二选一作为出发点，
+# 没被选中的那个视为普通路径，可以放障碍物。
+ACTIVE_START = [None]
+
+
+def set_active_start(start_key):
+    ACTIVE_START[0] = start_key
+    return start_key
+
 
 class Cell:
     """一个格子。"""
@@ -73,6 +85,7 @@ class Cell:
         self.color = C_FLOOR
         self.goal_name = None           # 目标地点名称
         self.mark = ""                  # 格子内显示的字符
+        self.obstacle = False           # 比赛开始前随机放置的障碍物
         # 原图像素范围（左上、右下），初始化后填入
         self.x0 = self.y0 = self.x1 = self.y1 = 0.0
 
@@ -90,7 +103,21 @@ class Cell:
 
     @property
     def passable(self):
-        return self.kind != WALL
+        """黄色禁行区与障碍物都不能进入。"""
+        return self.kind != WALL and not self.obstacle
+
+    @property
+    def can_hold_obstacle(self):
+        """能否放障碍物。
+
+        规则：终点/禁行区不行；两个蓝色出发点里，被选作出发点的那个不行
+        （小车就停在那儿），另一个出发点视为普通路径、可以放障碍物。
+        """
+        if self.obstacle:
+            return False
+        if self.kind == FLOOR:
+            return True
+        return self.kind == START and self.key != ACTIVE_START[0]
 
     @property
     def cx(self):
@@ -129,7 +156,7 @@ def build_grid():
 GRID = build_grid()
 
 # ----------------------------------------------------------------------------
-# 2. 路径规划：BFS 最短路（4 邻域，黄色格子禁行）
+# 2. 路径规划：BFS 最短路（4 邻域，黄色禁行区与障碍物都不可通行）
 # ----------------------------------------------------------------------------
 
 DIRS = [(-1, 0), (1, 0), (0, -1), (0, 1)]   # 上 下 左 右
@@ -143,7 +170,7 @@ def neighbors(cell):
 
 
 def shortest_path(start_key, goal_key):
-    """BFS 求最短路径。
+    """BFS 求最短路径（自动绕开黄色禁行区与障碍物）。
 
     返回 (路径格子列表, 说明信息)。列表含起点与终点；
     若不可达则返回 ([], 原因)。
@@ -151,8 +178,10 @@ def shortest_path(start_key, goal_key):
     s, t = GRID.get(start_key), GRID.get(goal_key)
     if s is None or t is None:
         return [], "格子不存在"
-    if not s.passable or not t.passable:
-        return [], "起点或终点位于禁止通行区域"
+    if not s.passable:
+        return [], "起点不可通行（禁行区或障碍物）"
+    if not t.passable:
+        return [], "目标不可通行（禁行区或障碍物）"
     if s.key == t.key:
         return [s], "已经在目标格子上"
 
@@ -168,7 +197,7 @@ def shortest_path(start_key, goal_key):
                 queue.append(nxt)
 
     if t.key not in prev:
-        return [], "目标不可达"
+        return [], "绕开障碍物后无法到达"
 
     path = []
     node = t
@@ -187,7 +216,82 @@ def path_text(path):
 
 
 # ----------------------------------------------------------------------------
-# 3. 仿真界面
+# 3. 障碍物：可以放哪些格子、随机生成、可达性检查
+# ----------------------------------------------------------------------------
+
+OTHER_START = {START_CELLS[0]: START_CELLS[1], START_CELLS[1]: START_CELLS[0]}
+
+
+def goal_cells():
+    return [GRID[key] for key in GOAL_INFO]
+
+
+def obstacle_candidates(start_key):
+    """可放置障碍物的格子：除“被选作出发点的那个蓝格”以外的可通行格子。
+
+    另一个蓝色出发点按比赛规则视为普通路径，因此可以放障碍物。
+    """
+    return [GRID[k] for k in sorted(GRID)
+            if k != start_key and GRID[k].can_hold_obstacle]
+
+
+def reachable_goals(start_key):
+    """返回 (可达目标名列表, 不可达目标名列表)。"""
+    ok, bad = [], []
+    for cell in goal_cells():
+        path, err = shortest_path(start_key, cell.key)
+        (ok if path else bad).append(cell.goal_name)
+    return ok, bad
+
+
+def clear_obstacles():
+    for cell in GRID.values():
+        cell.obstacle = False
+
+
+def place_obstacles(keys):
+    """按给定格子摆放障碍物（会先清空原有障碍物）。"""
+    clear_obstacles()
+    for key in keys:
+        cell = GRID.get(key)
+        if cell is not None and cell.can_hold_obstacle:
+            cell.obstacle = True
+    return [GRID[k].key for k in keys if GRID.get(k) is not None and GRID[k].obstacle]
+
+
+def random_obstacles(start_key, count=None, rng=None, max_tries=300):
+    """模拟比赛随机放置 1~2 个障碍物。
+
+    约束：不能放在出发点/另一个出发点/禁行区/目标地点上，
+          并且放完之后三个目标地点必须仍然可达（否则重新随机）。
+    返回 (障碍物格子列表, 说明文字)。
+    """
+    rng = rng or random
+    cand = obstacle_candidates(start_key)
+    if not cand:
+        return [], "没有可放置障碍物的位置"
+
+    want = count if count is not None else rng.choice((1, 2))
+    want = max(1, min(int(want), 2, len(cand)))
+    clear_obstacles()
+    for _ in range(max_tries):
+        picked = rng.sample(cand, want)
+        for cell in picked:
+            cell.obstacle = True
+        _, bad = reachable_goals(start_key)
+        if not bad:
+            names = "、".join(c.name for c in picked)
+            return [c.key for c in picked], "随机放置 %d 个障碍物：%s" % (want, names)
+        clear_obstacles()
+
+    # 极端情况下退化为 1 个障碍物再试
+    if want > 1:
+        return random_obstacles(start_key, count=1, rng=rng, max_tries=max_tries)
+    return [], "随机放置失败（找不到不堵死目标的方案）"
+
+
+# ----------------------------------------------------------------------------
+# 4. 仿真界面
 # ----------------------------------------------------------------------------
 
 CELL_PX = 140          # 基准格子边长（像素），屏幕较小时会自动缩小
@@ -208,13 +312,25 @@ def cell_px_for_screen(root, panel_width=330, chrome=110):
 
 
 class Simulator:
-    def __init__(self, root, start_key):
+    """界面与流程。
+
+    三个阶段（phase）：
+        setup    —— 比赛准备：手动点击或“随机障碍物”按钮放置 1~2 个障碍物
+        select   —— 仿真中：选择下一个目标地点（点击出发点为结束）
+        move     —— 小车正在行驶
+    """
+
+    MAX_OBSTACLES = 2
+
+    def __init__(self, root, start_key, obstacles=None):
         self.root = root
         self.start_key = start_key
         self.car_cell = GRID[start_key]
         self.cell_px = cell_px_for_screen(root)
+        set_active_start(start_key)   # 另一个蓝色出发点从此可以放障碍物
 
-        self.mode = "select"          # "move" 行驶中 / "select" 等待选择
+        self.phase = "setup"          # "setup" 准备 / "select" 等待选择 / "move" 行驶中
+        self.obstacle_keys = []       # 当前放置的障碍物格子
         self.move = None              # 当前移动状态
         self.trail = [start_key]      # 走过的格子
         self.steps = 0                # 已走格子数
@@ -223,12 +339,14 @@ class Simulator:
         self.preview_path = []
         self.finished = False
 
+        if obstacles:                 # 允许外部先摆好障碍物（自动演示用）
+            self.obstacle_keys = place_obstacles(obstacles)
+
         self._build_ui()
         self._draw_static()
         self._draw_car()
         self.log("出发点：%s（蓝色格子）" % self.car_cell.name)
-        self.log("请点击地图上的目标格子（红色区域 / 白色区域1 / 白色区域2）")
-        self.status("请选择目标地点")
+        self.enter_setup(first=True)
 
     # ---------------------------------------------------------------- 界面 --
     def _build_ui(self):
@@ -263,7 +381,7 @@ class Simulator:
 
         tk.Label(panel, text="避障比赛仿真", bg="#20242b", fg="#e8ecf1",
                  font=self.f_title).pack(anchor="w")
-        tk.Label(panel, text="绿色圆 = 小车　　黄色 = 禁止通行", bg="#20242b",
+        tk.Label(panel, text="绿色圆 = 小车　黄色 = 禁止通行　棕色 = 障碍物", bg="#20242b",
                  fg="#98a2b3", font=self.f_small).pack(anchor="w", pady=(2, 10))
 
         self.lbl_mode = tk.Label(panel, text="", bg="#20242b", fg="#4ade80",
@@ -275,6 +393,30 @@ class Simulator:
         self.lbl_stat = tk.Label(panel, text="", bg="#20242b", fg="#7dd3fc",
                                  font=self.f_small, justify="left")
         self.lbl_stat.pack(anchor="w", pady=(6, 0))
+
+        tk.Frame(panel, bg="#39404d", height=1).pack(fill="x", pady=10)
+
+        # ---- 比赛准备阶段：障碍物 ----
+        self.frm_setup = tk.Frame(panel, bg="#20242b")
+        self.frm_setup.pack(anchor="w", fill="x")
+        tk.Label(self.frm_setup, text="① 放置障碍物（1~2 个）", bg="#20242b",
+                 fg="#e8ecf1", font=self.f_bold).pack(anchor="w")
+        tk.Label(self.frm_setup, text="点格子可放置/取消；也可以点“随机障碍物”模拟比赛",
+                 bg="#20242b", fg="#98a2b3", font=self.f_small,
+                 wraplength=250, justify="left").pack(anchor="w", pady=(2, 4))
+        r1 = tk.Frame(self.frm_setup, bg="#20242b")
+        r1.pack(anchor="w", fill="x")
+        self.btn_random = self._button(r1, "随机障碍物", self.randomize_obstacles)
+        self.btn_random.pack(side="left")
+        self.btn_clear = self._button(r1, "清空", self.clear_obstacle_ui)
+        self.btn_clear.pack(side="left", padx=6)
+        r2 = tk.Frame(self.frm_setup, bg="#20242b")
+        r2.pack(anchor="w", fill="x", pady=(6, 0))
+        self.btn_start = self._button(r2, "② 开始仿真", self.begin_simulation)
+        self.btn_start.pack(side="left")
+        self.lbl_obs = tk.Label(self.frm_setup, text="", bg="#20242b", fg="#7dd3fc",
+                                font=self.f_small, justify="left", wraplength=250)
+        self.lbl_obs.pack(anchor="w", pady=(6, 0))
 
         tk.Frame(panel, bg="#39404d", height=1).pack(fill="x", pady=10)
 
@@ -295,14 +437,15 @@ class Simulator:
 
         btns = tk.Frame(panel, bg="#20242b")
         btns.pack(anchor="w", fill="x", pady=(10, 0))
-        self._button(btns, "结束本次仿真", self.finish).pack(side="left")
-        self._button(btns, "重新选择出发点", self.restart).pack(side="left", padx=6)
+        self.btn_finish = self._button(btns, "结束本次仿真", self.finish)
+        self.btn_finish.pack(side="left")
+        self._button(btns, "重新开始", self.restart).pack(side="left", padx=6)
 
         tk.Label(panel, text="行驶记录", bg="#20242b", fg="#e8ecf1",
                  font=self.f_bold).pack(anchor="w", pady=(14, 4))
         box = tk.Frame(panel, bg="#20242b")
         box.pack(fill="both", expand=True)
-        self.txt = tk.Text(box, width=38, height=14, bg="#151920", fg="#cbd5e1",
+        self.txt = tk.Text(box, width=38, height=12, bg="#151920", fg="#cbd5e1",
                            font=self.f_mono, relief="flat", wrap="word",
                            insertbackground="#cbd5e1")
         sb = tk.Scrollbar(box, command=self.txt.yview)
@@ -311,9 +454,9 @@ class Simulator:
         self.txt.pack(side="left", fill="both", expand=True)
         self.txt.configure(state="disabled")
 
-        tk.Label(panel, text="左键点击格子选择；点击出发点所在格子即结束仿真",
-                 bg="#20242b", fg="#98a2b3", font=self.f_small,
-                 wraplength=250, justify="left").pack(anchor="w", pady=(8, 0))
+        self.lbl_hint = tk.Label(panel, text="", bg="#20242b", fg="#98a2b3",
+                                 font=self.f_small, wraplength=250, justify="left")
+        self.lbl_hint.pack(anchor="w", pady=(8, 0))
 
     def _button(self, parent, text, cmd):
         return tk.Button(parent, text=text, command=cmd, font=self.f_ui,
@@ -408,8 +551,38 @@ class Simulator:
 
     def _draw_car(self):
         self.canvas.delete("car")
+        self.draw_obstacles()
         cx, cy = self.to_canvas(self.car_cell.cx, self.car_cell.cy)
         self.draw_car_at(cx, cy)
+
+    def draw_obstacles(self):
+        """画障碍物，以及“放完之后目标不可达”的告警框。"""
+        cv = self.canvas
+        cv.delete("obs")
+        cv.delete("warn")
+        for key in self.obstacle_keys:
+            cell = GRID[key]
+            x0, y0 = self.to_canvas(cell.x0, cell.y0)
+            x1, y1 = self.to_canvas(cell.x1, cell.y1)
+            cv.create_rectangle(x0, y0, x1, y1, fill=C_OBSTACLE, outline="",
+                                tags=("obs",))
+            cv.create_text((x0 + x1) / 2, (y0 + y1) / 2, text="障碍",
+                           font=self.f_cell, fill="#ffffff", tags=("obs",))
+        # 可达性告警：不可达的目标用红框标出
+        _, bad = reachable_goals(self.car_cell.key)
+        self.bad_goals = bad
+        for name in bad:
+            key = next(k for k, (n, _c, _m) in GOAL_INFO.items() if n == name)
+            cell = GRID[key]
+            x0, y0 = self.to_canvas(cell.x0 + 3, cell.y0 + 3)
+            x1, y1 = self.to_canvas(cell.x1 - 3, cell.y1 - 3)
+            cv.create_rectangle(x0, y0, x1, y1, outline=C_BAD, width=4,
+                                dash=(4, 3), tags=("warn",))
+        self.canvas.tag_raise("grid")
+        self.canvas.tag_raise("ring")
+        self.canvas.tag_raise("hover")
+        self.canvas.tag_raise("path")
+        self.canvas.tag_raise("car")
 
     def draw_car_at(self, cx, cy):
         self.canvas.delete("car")
@@ -424,9 +597,112 @@ class Simulator:
     def status(self, text):
         self.lbl_status.config(text=text)
 
+    # -------------------------------------------------- 阶段一：放置障碍物 --
+    def enter_setup(self, first=False):
+        """进入比赛准备阶段：放置 1~2 个障碍物。"""
+        self.phase = "setup"
+        self.lbl_mode.config(text="① 放置障碍物", fg="#facc15")
+        self.btn_random.config(state="normal")
+        self.btn_clear.config(state="normal")
+        self.btn_start.config(state="disabled")
+        self.btn_finish.config(state="disabled")
+        self.lbl_hint.config(text="点格子放置/取消障碍物（1~2 个）；"
+                                  "点“开始仿真”后小车才会出发")
+        self._refresh_obstacle_panel()
+        if first:
+            self.status("比赛准备：请放置 1~2 个障碍物。\n"
+                        "可以自己点格子，也可以点“随机障碍物”模拟比赛随机放置。\n"
+                        "另一个蓝色出发点已视为普通路径，也可以放障碍物。")
+
+    def _refresh_obstacle_panel(self):
+        n = len(self.obstacle_keys)
+        self.lbl_obs.config(text="已放置障碍物：%d 个（上限 %d）" % (n, self.MAX_OBSTACLES))
+        ok, bad = reachable_goals(self.car_cell.key)
+        if bad:
+            self.lbl_obs.config(
+                text="已放置 %d 个障碍物 ⚠ 目标不可达：%s\n请调整障碍物后再开始"
+                     % (n, "、".join(bad)),
+                fg=C_BAD)
+            self.btn_start.config(state="disabled")
+            self.status("⚠ 这样摆放会让 %s 走不到！\n请取消或换一个障碍物位置。"
+                        % "、".join(bad))
+        else:
+            self.lbl_obs.config(
+                text="已放置障碍物：%d 个　目标全部可达 ✔" % n, fg="#7dd3fc")
+            self.btn_start.config(state="normal" if n >= 1 else "disabled")
+            if n == 0:
+                self.status("请至少放置 1 个障碍物（或点“随机障碍物”）。")
+            else:
+                self.status("已放置 %d 个障碍物，目标全部可达。\n"
+                            "可以继续放置，或点“② 开始仿真”。" % n)
+
+    def toggle_obstacle(self, cell):
+        if cell.key in self.obstacle_keys:
+            self.obstacle_keys.remove(cell.key)
+            cell.obstacle = False
+            self.log("取消障碍物：%s" % cell.name)
+        elif cell.can_hold_obstacle:
+            if len(self.obstacle_keys) >= self.MAX_OBSTACLES:
+                self.status("最多只能放 %d 个障碍物。\n先取消一个，或点“随机障碍物”重新随机。"
+                            % self.MAX_OBSTACLES)
+                return
+            cell.obstacle = True
+            self.obstacle_keys.append(cell.key)
+            self.log("放置障碍物：%s" % cell.name)
+        else:
+            self.status("%s 不能放障碍物：\n黄色禁行区和三个目标地点都不允许。"
+                        % cell.name)
+            return
+        self._draw_car()
+        self._refresh_obstacle_panel()
+
+    def randomize_obstacles(self):
+        keys, msg = random_obstacles(self.car_cell.key)
+        self.obstacle_keys = keys
+        self._draw_car()
+        self._refresh_obstacle_panel()
+        self.log("🎲 " + msg)
+        if keys:
+            self.status("🎲 %s\n目标全部可达。可以点“随机障碍物”再换一组，或点“② 开始仿真”。" % msg)
+        else:
+            self.status("随机放置失败：%s" % msg)
+
+    def clear_obstacle_ui(self):
+        clear_obstacles()
+        self.obstacle_keys = []
+        self._draw_car()
+        self._refresh_obstacle_panel()
+        self.log("已清空障碍物")
+
+    def begin_simulation(self):
+        if self.phase != "setup":
+            return
+        if not self.obstacle_keys:
+            self.status("请至少放置 1 个障碍物再开始（也可以点“随机障碍物”）。")
+            return
+        _, bad = reachable_goals(self.car_cell.key)
+        if bad:
+            self.status("⚠ 目标不可达：%s\n请先调整障碍物位置。" % "、".join(bad))
+            return
+
+        self.phase = "select"
+        self.btn_random.config(state="disabled")
+        self.btn_clear.config(state="disabled")
+        self.btn_start.config(state="disabled")
+        self.btn_finish.config(state="normal")
+        self.lbl_mode.config(text="② 等待选择", fg="#4ade80")
+        self.lbl_hint.config(text="左键点击目标格子；点击出发点所在格子即结束仿真")
+        self.log("—— 开始仿真（障碍物 %d 个：%s）——"
+                 % (len(self.obstacle_keys),
+                    "、".join(GRID[k].name for k in self.obstacle_keys)))
+        self.status("比赛开始！请选择第一个目标地点。\n小车的路径会自动绕开障碍物。")
+        self.update_stat()
+
+    # ---------------------------------------------------------------- 交互 --
     def update_stat(self):
-        self.lbl_stat.config(text="已走格子数：%d　　到达目标：%s"
-                                  % (self.steps,
+        obs = len(self.obstacle_keys)
+        self.lbl_stat.config(text="已走格子数：%d　障碍物：%d\n到达目标：%s"
+                                  % (self.steps, obs,
                                      "、".join(self.visited_goals) if self.visited_goals else "无"))
 
     def log(self, text):
@@ -451,6 +727,23 @@ class Simulator:
             self.canvas.config(cursor="arrow")
             return
 
+        # ---- 准备阶段：鼠标在提示可以/不可以放障碍物 ----
+        if self.phase == "setup":
+            if cell.key in self.obstacle_keys:
+                self.canvas.config(cursor="hand2")
+                self._highlight(cell, "#ffd166")
+                self.status("点一下取消这个障碍物（%s）" % cell.name)
+            elif cell.can_hold_obstacle:
+                self.canvas.config(cursor="hand2")
+                self._highlight(cell, "#f0a020")
+                self.status("点一下在这里放障碍物（%s）" % cell.name)
+            else:
+                self.canvas.config(cursor="X_cursor")
+                self._highlight(cell, "#ff5c5c")
+                self.status("%s 不允许放障碍物" % cell.name)
+            return
+
+        # ---- 仿真阶段 ----
         if cell.key == self.start_key:
             self.canvas.config(cursor="hand2")
             self._highlight(cell, "#ffd166")
@@ -460,10 +753,13 @@ class Simulator:
         if not cell.passable:
             self.canvas.config(cursor="X_cursor")
             self._highlight(cell, "#ff5c5c")
-            self.status("黄色区域禁止通行，不能作为目标")
+            if cell.obstacle:
+                self.status("障碍物（%s）不可通行，不能作为目标" % cell.name)
+            else:
+                self.status("黄色区域禁止通行，不能作为目标")
             return
 
-        if self.mode == "move":
+        if self.phase == "move":
             self.canvas.config(cursor="watch")
             self._highlight(cell, "#8aa0b8")
             self.status("小车正在行驶，请稍候……")
@@ -478,7 +774,7 @@ class Simulator:
             return
         self.preview_path = path
         self._draw_path(path, color="#facc15", width=3, dash=(5, 4))
-        self.status("%s\n最短路径：经过 %d 个格子（含起终点）\n%s"
+        self.status("%s\n最短路径（已绕开障碍物）：经过 %d 个格子（含起终点）\n%s"
                     % (cell.name, len(path), path_text(path)))
 
     def _highlight(self, cell, color):
@@ -492,14 +788,25 @@ class Simulator:
         self.canvas.delete("hover")
         self.canvas.delete("preview")
         self.preview_path = []
-        if self.mode == "select" and not self.finished:
+        if self.finished:
+            return
+        if self.phase == "setup":
+            self._refresh_obstacle_panel()
+        elif self.phase == "select":
             self.status("请选择目标地点")
 
     def on_click(self, event):
-        if self.finished or self.mode != "select":
+        if self.finished:
             return
         cell = self.cell_at_canvas(event.x, event.y)
-        if cell is None or not cell.passable:
+        if cell is None:
+            return
+
+        if self.phase == "setup":
+            self.toggle_obstacle(cell)
+            return
+
+        if self.phase != "select" or not cell.passable:
             return
 
         if cell.key == self.start_key:
@@ -523,13 +830,16 @@ class Simulator:
         # 显示规划出的最短路径
         self._draw_path(path, color=C_PATH, width=4)
         self.log("规划路径 %s → %s：%s" % (self.car_cell.name, target.name, path_text(path)))
-        self.log("  经过 %d 个格子，需要行驶 %d 步" % (len(path), len(path) - 1))
+        self.log("  经过 %d 个格子，需要行驶 %d 步%s"
+                 % (len(path), len(path) - 1,
+                    "（已绕开 %d 个障碍物）" % len(self.obstacle_keys)
+                    if self.obstacle_keys else ""))
 
         if len(path) == 1:
             self.on_arrive(target)
             return
 
-        self.mode = "move"
+        self.phase = "move"
         self.lbl_mode.config(text="行驶中……", fg="#facc15")
         self.status("正在驶向 %s" % target.name)
         self.move = {
@@ -581,8 +891,8 @@ class Simulator:
         else:
             self.log("已到达 %s（非目标地点）" % cell.name)
 
-        self.mode = "select"
-        self.lbl_mode.config(text="等待选择", fg="#4ade80")
+        self.phase = "select"
+        self.lbl_mode.config(text="② 等待选择", fg="#4ade80")
         self.status("已到达 %s。\n请选择下一个目标地点（或点击出发点结束仿真）" % cell.name)
         self.update_stat()
         self.canvas.config(cursor="hand2")
@@ -592,6 +902,7 @@ class Simulator:
         if self.finished:
             return
         self.finished = True
+        self.phase = "done"
         self.move = None
         self.canvas.delete("path")
         self.canvas.delete("hover")
@@ -599,13 +910,17 @@ class Simulator:
         self.canvas.delete("car")
         self._draw_car()
         self.lbl_mode.config(text="仿真结束", fg="#f87171")
+        self.btn_finish.config(state="disabled")
         self.update_stat()
 
         visited = set(self.visited_goals)
         all_goals = set(name for name, _c, _m in GOAL_INFO.values())
         missing = all_goals - visited
-        summary = ("出发点：%s\n行驶格数：%d\n到达过的目标：%s\n未到达的目标：%s"
-                   % (GRID[self.start_key].name, self.steps,
+        summary = ("出发点：%s\n障碍物：%s\n行驶格数：%d\n到达过的目标：%s\n未到达的目标：%s"
+                   % (GRID[self.start_key].name,
+                      "、".join(GRID[k].name for k in self.obstacle_keys)
+                      if self.obstacle_keys else "无",
+                      self.steps,
                       "、".join(self.visited_goals) if self.visited_goals else "无",
                       "、".join(sorted(missing)) if missing else "无"))
         self.log("—— 本次仿真结束 ——")

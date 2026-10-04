@@ -1,8 +1,7 @@
 # -*- coding: utf-8 -*-
-"""无人值守演示：自动选定出发点，依次跑几个目标，最后回到出发点。
+"""无人值守演示：自动随机放置障碍物 -> 开始仿真 -> 依次跑目标 -> 回到出发点。
 
-用途：不需要人工点击也能看到完整效果（路径规划 + 小车动画 + 结束总结）。
-注意：不需要移动鼠标，也不会占用输入焦点。
+完整走一遍新流程（含避障），不需要人工点击，也不会占用鼠标。
 """
 import sys
 import os
@@ -25,11 +24,15 @@ sim = M.Simulator(win, START)
 win.update()
 
 
-def click(key):
+def event_for(key):
     ev = E()
     ev.x, ev.y = sim.to_canvas(M.GRID[key].cx, M.GRID[key].cy)
-    sim.on_motion(ev)
-    sim.on_click(ev)
+    return ev
+
+
+def click(key):
+    sim.on_motion(event_for(key))
+    sim.on_click(event_for(key))
 
 
 def run_until_still(limit=20.0):
@@ -45,13 +48,32 @@ def run_until_still(limit=20.0):
 
 
 print("出发点：%s" % M.GRID[START].name, flush=True)
+
+# ---- 阶段一：随机放置障碍物（模拟比赛） ----
+sim.randomize_obstacles()
+win.update()
+print("障碍物：%s" % "、".join(M.GRID[k].name for k in sim.obstacle_keys), flush=True)
+assert sim.obstacle_keys, "随机放置应当成功"
+ok, bad = M.reachable_goals(START)
+assert not bad, "随机放置后目标应全部可达，实际不可达：%s" % bad
+
+# ---- 阶段二：开始仿真 ----
+sim.begin_simulation()
+win.update()
+assert sim.phase == "select", "开始仿真后应处于选择目标阶段"
+print("已开始仿真（障碍物 %d 个）" % len(sim.obstacle_keys), flush=True)
+
+# ---- 阶段三：逐个目标行驶 ----
 for goal in ROUTE:
     path, err = M.shortest_path(sim.car_cell.key, goal)
     assert not err, err
     print("→ %s：%d 格  %s" % (M.GRID[goal].name, len(path),
                                " → ".join(c.name for c in path)), flush=True)
+    assert all(c.passable for c in path), "路径不能穿过障碍物"
     click(goal)
-    run_until_still()
+    if not run_until_still():
+        print("窗口被关闭，演示结束", flush=True)
+        sys.exit(0)
     print("   已到达，累计行驶 %d 格" % sim.steps, flush=True)
 
 print("回到出发点 %s" % M.GRID[START].name, flush=True)

@@ -90,12 +90,72 @@ def click(key):
     sim.on_click(ev)
 
 
+# ------------------------------------------------------------ 阶段：放障碍物 --
+print("\n=== 阶段①：放置障碍物 ===")
+check(sim.phase == "setup", "初始进入障碍物准备阶段（实际 %s）" % sim.phase)
+check(str(sim.btn_start["state"]) == "disabled", "没放障碍物时“开始仿真”按钮不可用")
+sim.begin_simulation()
+check(sim.phase == "setup", "没有障碍物时不能开始仿真")
+
+# 被选中的出发点不能放障碍物
+click((1, 5))
+check(len(sim.obstacle_keys) == 0, "被选作出发点的蓝格不能放障碍物")
+# 黄色禁行区与目标地点不能放
+click((2, 2)); check(len(sim.obstacle_keys) == 0, "黄色禁行区不能放障碍物")
+click((1, 3)); check(len(sim.obstacle_keys) == 0, "红色目标区域不能放障碍物")
+click((5, 3)); check(len(sim.obstacle_keys) == 0, "白色区域1 不能放障碍物")
+click((3, 1)); check(len(sim.obstacle_keys) == 0, "白色区域2 不能放障碍物")
+# 另一个出发点可以放
+click((5, 5))
+check(sim.obstacle_keys == [(5, 5)], "另一个蓝色出发点可以放障碍物（视为普通路径）")
+click((5, 5))
+check(sim.obstacle_keys == [], "再点一下取消该障碍物")
+
+# 手动放 1 个：r1c4 会挡住去红色区域的直路
+click((1, 4))
+check(sim.obstacle_keys == [(1, 4)], "手动放置障碍物成功")
+check(M.GRID[(1, 4)].obstacle and not M.GRID[(1, 4)].passable, "障碍物格子不可通行")
+check(str(sim.btn_start["state"]) == "normal", "有 1 个障碍物后可以开始仿真")
+n_obs = len(sim.canvas.find_withtag("obs")) if hasattr(sim, "canvas") else 0
+check(any(sim.canvas.itemcget(i, "fill") == M.C_OBSTACLE
+          for i in sim.canvas.find_withtag("obs")
+          if sim.canvas.type(i) == "rectangle"),
+      "画布上画出了棕色障碍物")
+
+# 第 3 个障碍物应被拒绝
+click((3, 3)); click((3, 4))
+check(len(sim.obstacle_keys) <= 2, "障碍物最多 2 个（实际 %d）" % len(sim.obstacle_keys))
+
+# 随机放置
+sim.randomize_obstacles()
+check(1 <= len(sim.obstacle_keys) <= 2, "随机放置得到 1~2 个障碍物")
+ok, bad = M.reachable_goals(sim.start_key)
+check(not bad, "随机放置后三个目标仍全部可达")
+
+# 手动摆一个会堵死出发点的组合，应被拦住不能开始
+sim.clear_obstacle_ui()
+click((1, 4)); click((2, 5))
+check(str(sim.btn_start["state"]) == "disabled", "目标不可达时“开始仿真”被禁用")
+sim.begin_simulation()
+check(sim.phase == "setup", "目标不可达时不允许开始仿真")
+check(sim.bad_goals, "状态栏/画布给出了不可达告警")
+
+# 换成一组不影响通行的障碍物
+sim.clear_obstacle_ui()
+click((3, 3))
+check(sim.obstacle_keys == [(3, 3)], "重新放置一个障碍物")
+sim.begin_simulation()
+check(sim.phase == "select", "点击“开始仿真”后进入选择目标阶段")
+check(str(sim.btn_random["state"]) == "disabled", "开始仿真后随机按钮被禁用")
+check(sim.obstacle_keys == [(3, 3)], "开始仿真后障碍物保持不变")
+
 print("\n=== 行驶流程：出发 -> 三个目标来回 -> 回到出发点 ===")
 seq = [(1, 3), (5, 3), (3, 1), (1, 3), (5, 3), (1, 3), (3, 1)]
 expected_steps = 0
 for goal in seq:
     p, e = M.shortest_path(sim.car_cell.key, goal)
     check(not e, "从 %s 到 %s 可规划出路径" % (sim.car_cell.name, M.GRID[goal].name))
+    check(all(c.passable for c in p), "路径上没有不可通行格子（自动绕障）")
     before = sim.steps
     click(goal)
     drive()
@@ -103,13 +163,13 @@ for goal in seq:
     check(sim.car_cell.key == goal, "小车已停在 %s" % M.GRID[goal].name)
     check(sim.steps == expected_steps,
           "累计行驶格数 = %d（期望 %d）" % (sim.steps, expected_steps))
-    check(sim.move is None and sim.mode == "select", "到达后回到可选择的等待状态")
+    check(sim.move is None and sim.phase == "select", "到达后回到可选择的等待状态")
 
 check(sim.visited_goals == ["红色区域", "白色区域1", "白色区域2"],
       "到达目标记录：%s" % "、".join(sim.visited_goals))
 
 # 黄色禁行格点击无效
-mode_before, cell_before = sim.mode, sim.car_cell.key
+cell_before = sim.car_cell.key
 click((2, 2))
 check(sim.car_cell.key == cell_before and sim.move is None,
       "点击黄色禁行格 (2,2) 不产生移动")

@@ -84,33 +84,65 @@ def sample(mx, my):
     return None
 
 
-print("\n逐格取 4 角颜色：")
+OBS = np.array([int(M.C_OBSTACLE[i:i + 2], 16) for i in (1, 3, 5)])
+
+print("\n逐格取 4 角颜色（灰/白/黄/蓝/红/棕六种之一）：")
 bad = 0
+n_obs = 0
 for r in range(1, 6):
     line = []
     for c in range(1, 6):
         cell = M.GRID[(r, c)]
-        want = np.array([int(cell.color[i:i + 2], 16) for i in (1, 3, 5)])
+        base = np.array([int(cell.color[i:i + 2], 16) for i in (1, 3, 5)])
         got = [sample(cell.x0 + (cell.x1 - cell.x0) * fx,
                       cell.y0 + (cell.y1 - cell.y0) * fy)
                for fx, fy in ((0.2, 0.2), (0.8, 0.2), (0.2, 0.8), (0.8, 0.8))]
         vis = [g for g in got if g is not None]
-        hit = sum(1 for g in vis if np.abs(g - want).max() < 30)
-        ok = len(vis) == 4 and hit == 4
+        hit_base = sum(1 for g in vis if np.abs(g - base).max() < 30)
+        hit_obs = sum(1 for g in vis if np.abs(g - OBS).max() < 30)
+        is_obs = hit_obs > hit_base
+        if is_obs:
+            n_obs += 1
+        # 障碍物格子里有“障碍”文字，允许 1 个角被文字盖住
+        need = 3 if is_obs else 4
+        ok = len(vis) == 4 and max(hit_base, hit_obs) >= need
         if not ok:
             bad += 1
-            print("  ✘ r%dc%d 期望 %s 命中 %d/%d 取样 %s"
-                  % (r, c, tuple(int(v) for v in want), hit, len(vis),
+            print("  ✘ r%dc%d 期望 %s（或障碍物色）命中 底色 %d / 障碍色 %d  取样 %s"
+                  % (r, c, tuple(int(v) for v in base), hit_base, hit_obs,
                      [tuple(int(v) for v in g) for g in vis]))
-        line.append("✔" if ok else "✘")
+        line.append(("障" if is_obs else "✔") if ok else "✘")
     print("  r%d " % r + " ".join(line))
-print("格子颜色不匹配数：%d / 25" % bad)
+print("格子颜色不匹配数：%d / 25（其中障碍物格 %d 个）" % (bad, n_obs))
 FAIL += bad
 
-# 路径：BFS 每段中点附近应出现绿色像素
+# 路径：按图上识别出的障碍物重算 BFS，逐段中点附近应出现绿色像素
 green = (G > 90) & (G > R + 40) & (G > B + 30)
 route = [(1, 5), (1, 3), (5, 3), (3, 1), (1, 3), (5, 3)]
-print("\n路径校验：")
+# 用像素识别障碍物：每个格子中心附近取一圈点，多数命中障碍物色才算
+obs_keys = []
+for r in range(1, 6):
+    for c in range(1, 6):
+        cell = M.GRID[(r, c)]
+        pts = [sample(cell.cx + ddx, cell.cy + ddy)
+               for ddx in (-25, 0, 25) for ddy in (-25, 0, 25)]
+        pts = [p for p in pts if p is not None]
+        hit = sum(1 for p in pts if np.abs(p - OBS).max() < 20)
+        if pts and hit >= max(3, len(pts) - 3):
+            obs_keys.append((r, c))
+print("\n图中识别到的障碍物：%s" % (obs_keys or "无"))
+
+# 按识别结果重建地图状态，再算 BFS
+M.clear_obstacles()
+for key in obs_keys:
+    M.GRID[key].obstacle = True
+M.set_active_start(route[0])
+ok, bad = M.reachable_goals(route[0])
+print("按图片识别结果重算：障碍物 %s，不可达目标 %s" % (obs_keys or "无", bad or "无"))
+if bad:
+    FAIL += 1
+
+print("路径校验：")
 missing = []
 for i in range(len(route) - 1):
     path, err = M.shortest_path(route[i], route[i + 1])
@@ -118,6 +150,7 @@ for i in range(len(route) - 1):
         print("  ✘ %s -> %s : %s" % (route[i], route[i + 1], err))
         FAIL += 1
         continue
+    crossed = [c.key for c in path if c.key in obs_keys]
     seg_missing = 0
     for j in range(len(path) - 1):
         p, q = path[j], path[j + 1]
@@ -126,10 +159,13 @@ for i in range(len(route) - 1):
                    for ddx in range(-10, 11, 2) for ddy in range(-10, 11, 2)):
             seg_missing += 1
             missing.append((p.key, q.key))
-    print("  %s %s → %s：%d 格%s"
-          % ("✔" if seg_missing == 0 else "✘", M.GRID[route[i]].name,
+    if crossed:
+        FAIL += 1
+    print("  %s %s → %s：%d 格%s%s"
+          % ("✔" if seg_missing == 0 and not crossed else "✘", M.GRID[route[i]].name,
              M.GRID[route[i + 1]].name, len(path),
-             "" if seg_missing == 0 else "（%d 段缺绿色像素）" % seg_missing))
+             "" if seg_missing == 0 else "（%d 段缺绿色像素）" % seg_missing,
+             "" if not crossed else "（穿过了障碍物 %s）" % crossed))
 if missing:
     FAIL += 1
 

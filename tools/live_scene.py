@@ -30,6 +30,14 @@ def event_for(key):
     return ev
 
 
+# 比赛准备：先摆好障碍物（挡住出发点1 去红色区域的直路），再开始仿真
+sim.on_click(event_for((1, 4)))
+win.update()
+sim.begin_simulation()
+win.update()
+assert sim.phase == "select", "应当已进入仿真阶段"
+assert sim.obstacle_keys == [(1, 4)], "障碍物应为 r1c4"
+
 # 先驶到红色区域，并等动画彻底停下（否则截图可能拍到车在途中）
 sim.on_click(event_for((1, 3)))
 t0 = time.time()

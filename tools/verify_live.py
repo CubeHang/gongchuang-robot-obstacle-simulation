@@ -101,7 +101,7 @@ def sample_at(x, y):
 
 print("\n红/蓝格位置比对：")
 for key, want_hex in (((1, 3), "#eb0301"), ((1, 5), "#0b02cb"), ((3, 1), "#ffffff"),
-                      ((3, 3), "#c6c7c1")):
+                      ((3, 3), "#c6c7c1"), ((1, 4), "#7b3f00")):
     cell = M.GRID[key]
     cxp, cyp = xy(cell.cx, cell.cy)
     half = (cell.x1 - cell.x0) * 0.22 * k
@@ -119,7 +119,9 @@ for key, want_hex in (((1, 3), "#eb0301"), ((1, 5), "#0b02cb"), ((3, 1), "#fffff
         FAIL += 1
 
 print("\n全图逐格颜色抽查（每格取 4 角，只统计截图中可见的部分）：")
+OBS = np.array([int(M.C_OBSTACLE[i:i + 2], 16) for i in (1, 3, 5)])
 bad = 0
+n_obs = 0
 for r in range(1, 6):
     for c in range(1, 6):
         cell = M.GRID[(r, c)]
@@ -134,10 +136,15 @@ for r in range(1, 6):
             print("  · r%dc%d 在截图外（窗口底部被裁切）" % (r, c))
             continue
         hit = sum(1 for g in got if np.abs(g - want).max() < 25)
+        hit_obs = sum(1 for g in got if np.abs(g - OBS).max() < 25)
+        if hit_obs > hit:            # 这一格被摆成了障碍物
+            n_obs += 1
+            print("  ✔ r%dc%d 是障碍物（棕色）" % (r, c))
+            continue
         if hit < len(got):
             bad += 1
             print("  ✘ r%dc%d 期望 %s 命中 %d/%d" % (r, c, tuple(want), hit, len(got)))
-print("  可见格子中不完全匹配的：%d" % bad)
+print("  可见格子中不完全匹配的：%d（其中障碍物格 %d 个）" % (bad, n_obs))
 FAIL += bad
 
 # 绿色小车：应停在红色区域 r1c3 的格心

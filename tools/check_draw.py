@@ -71,6 +71,31 @@ if car:
           "小车中心与出发点1 格心重合 (%.1f,%.1f)" % ((x0 + x1) / 2, (y0 + y1) / 2))
     check(abs((x1 - x0) / 2 - M.CAR_R) < 1, "小车半径 = %d px" % M.CAR_R)
 
+# ---- 阶段一：在准备阶段放一个障碍物，检查障碍物绘制 ----
+print("\n准备阶段：")
+check(sim.phase == "setup", "初始为障碍物准备阶段")
+click_cell = M.GRID[(3, 2)]
+ev = E(); ev.x, ev.y = sim.to_canvas(click_cell.cx, click_cell.cy)
+sim.on_motion(ev)
+win.update()
+check("放障碍物" in sim.lbl_status.cget("text"), "准备阶段悬停提示可放障碍物")
+sim.on_click(ev)
+win.update()
+check(sim.obstacle_keys == [(3, 2)], "点击后放置了障碍物 r3c2")
+obs_rects = [i for i in sim.canvas.find_withtag("obs")
+             if sim.canvas.type(i) == "rectangle"]
+check(len(obs_rects) == 1, "画布上画出 1 个障碍物方块（实际 %d）" % len(obs_rects))
+if obs_rects:
+    check(sim.canvas.itemcget(obs_rects[0], "fill") == M.C_OBSTACLE,
+          "障碍物填充色 = %s" % M.C_OBSTACLE)
+check(sim.canvas.type([i for i in sim.canvas.find_withtag("obs")
+                       if sim.canvas.type(i) == "text"][0]) == "text",
+      "障碍物上有文字标注")
+
+sim.begin_simulation()
+win.update()
+check(sim.phase == "select", "开始仿真后进入选择目标阶段")
+
 # ---- 悬停白色区域1 (5,3) 应出现黄色预览路径，且经过 9 个格心 ----
 # 先把鼠标移到一个普通格子再移到目标格（模拟真实鼠标轨迹）
 for k in [(3, 3), (5, 3)]:
